@@ -1176,6 +1176,17 @@ input:checked+.toggle-thumb::after {
   border: 1px solid var(--border);
 }
 
+.nearby-search-wrap>div:nth-child(2) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nearby-search-wrap>div:nth-child(2) .input-field {
+  flex: 1;
+  min-width: 0;
+}
+
 #nearby-results .place-card {
   cursor: pointer;
 }
@@ -1546,7 +1557,8 @@ input:checked+.toggle-thumb::after {
 .home-custom-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
   padding: 10px 14px;
   background: rgba(99, 102, 241, 0.07);
@@ -1558,7 +1570,11 @@ input:checked+.toggle-thumb::after {
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
   font-family: 'Inter', sans-serif;
-  text-align: left;
+  text-align: center;
+}
+
+.home-custom-toggle .custom-toggle-chevron {
+  margin-left: auto;
 }
 
 .home-custom-toggle:hover {

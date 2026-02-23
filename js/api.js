@@ -357,6 +357,19 @@ FORMAT (follow exactly):
     return extractJSON(text);
 }
 
+// ── API Call: Enrich custom place names with descriptions ─────
+export async function enrichCustomPlaces(config, placeNames, locationHint, onProviderSwitch) {
+    if (!placeNames.length) return [];
+    const prompt = `You are a travel expert. For each of the following places, return a JSON array with a short description and category.
+Places: ${placeNames.map((n, i) => `${i + 1}. ${n}`).join(', ')}
+Location context: ${locationHint || 'India'}
+
+For each place return: { "name": "<exact name as given>", "shortDesc": "<1 engaging sentence about this place>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>", "location": "<city or area it belongs to>" }
+Return ONLY a valid JSON array. No explanation, no markdown.`;
+    const text = await smartAICall(prompt, config, onProviderSwitch);
+    return extractJSON(text);
+}
+
 // ── Helpers ───────────────────────────────────────────────────
 function daysBetween(d1, d2) {
     return Math.max(0, Math.floor((new Date(d2) - new Date(d1)) / 86400000));

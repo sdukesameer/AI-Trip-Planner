@@ -27,7 +27,7 @@
             <div class="nav-actions">
                 <button class="btn btn-ghost btn-sm" id="mytrips-btn" title="My saved trips">💾 My Trips</button>
                 <a class="btn btn-ghost btn-sm" id="docs-btn"
-                    href="https://github.com/sdukesameer/AI-Trip-Planner/blob/main/README.md" target="_blank"
+                    href="https://github.com/sdukesameer/AI-Trip-Planner?tab=readme-ov-file#readme" target="_blank"
                     rel="noopener" title="Documentation">📖 Docs</a>
                 <button class="btn btn-ghost btn-sm icon-btn" id="theme-btn" title="Toggle theme">🌙</button>
             </div>
@@ -226,13 +226,16 @@
 
                 <!-- Search Nearby -->
                 <div class="nearby-search-wrap glass-card" style="padding:20px;margin-bottom:20px;">
-                    <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-secondary);">🔍 Add a
-                        Specific Place or Area</div>
-                    <div style="display:flex;gap:10px;align-items:center;">
-                        <input class="input-field" type="text" id="nearby-input"
-                            placeholder="e.g. India Gate, Red Fort, Connaught Place…" style="flex:1;">
-                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn"
-                            style="white-space:nowrap;">Search</button>
+                    <div
+                        style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:16px;line-height:1;display:flex;align-items:center;">🔍</span>
+                        <span>Add a Specific Place or Area</span>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;width:100%;">
+                        <input class="input-field" type="text" id="nearby-input" placeholder="e.g. India Gate, Red Fort, Connaught Place…"
+                            style="flex:1;min-width:0;">
+                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn" style="white-space:nowrap;flex-shrink:0;">🔍
+                            Search</button>
                     </div>
                     <div id="nearby-results" class="place-card-grid" style="margin-top:12px;"></div>
                 </div>

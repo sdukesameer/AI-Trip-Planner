@@ -147,19 +147,9 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
     function setDrawCol(hex) { const [r, g, b] = hexToRgb(hex); doc.setDrawColor(r, g, b); }
 
     function addPageFooter() {
-        const footerUrl = 'https://my-trip-genie.netlify.app';
-        const footerText = `AI Trip Planner  •  ${footerUrl}`;
         setTextCol('#94a3b8');
         doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-        doc.text(footerText, ML, PH - 8);
-        // Add clickable link over the URL portion of the footer text
-        const fullTextWidth = doc.getStringUnitWidth(footerText) * 8 * 0.352;
-        const prefixWidth = doc.getStringUnitWidth('AI Trip Planner  •  ') * 8 * 0.352;
-        const urlWidth = fullTextWidth - prefixWidth;
-        doc.setTextColor(99, 102, 241); // accent color for the link
-        doc.text(footerUrl, ML + prefixWidth, PH - 8);
-        doc.link(ML + prefixWidth, PH - 11, urlWidth, 5, { url: footerUrl });
-        setTextCol('#94a3b8'); // reset
+        doc.text('AI Trip Planner  •  https://my-trip-genie.netlify.app', ML, PH - 8);
         doc.text(`${doc.internal.getCurrentPageInfo().pageNumber}`, PW - ML, PH - 8, { align: 'right' });
     }
 

@@ -285,6 +285,11 @@ body::before {
     outline: none;
 }
 
+input[type="date"].input-field {
+    text-align: center;
+    cursor: pointer;
+}
+
 .input-field::placeholder {
     color: var(--text-muted);
 }

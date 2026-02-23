@@ -4,7 +4,8 @@
 
 import {
     fetchFamousPlaces, fetchMorePlaces, searchNearbyPlaces,
-    fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback
+    fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback,
+    enrichCustomPlaces
 } from './api.js';
 import { initMap, plotItinerary, focusDay, focusPlace, resetFocus, setMapTheme } from './maps.js';
 import { downloadAsText, downloadAsPDF, copyToClipboard } from './download.js';
@@ -282,32 +283,75 @@ async function startPlanning() {
 
     try {
         setProgress(0, STAGES[0]);
-        const placesCacheKey = cacheKey('places', state.locations.join(','));
-        let places = cacheGet(placesCacheKey);
-        if (!places) {
-            places = await fetchFamousPlaces(state.config, state.locations, onSwitch);
-            cacheSet(placesCacheKey, places);
-        }
-        state.places = places;
 
-        // Ingest custom places from home page textarea
+        // Parse custom places early so we can enrich them
         const customTa = document.getElementById('home-custom-places');
-        const customPreSelected = [];
-        if (customTa && customTa.value.trim()) {
-            const names = customTa.value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-            names.forEach(name => {
-                const existing = state.places.find(p => p.name.toLowerCase() === name.toLowerCase());
-                const place = existing || { name, location: state.locations[0] || '', shortDesc: '', category: 'Heritage' };
-                if (!existing) state.places.push(place);
-                if (!state.selectedPlaces.find(p => p.name === place.name)) {
-                    state.selectedPlaces.push(place);
+        const customNames = customTa && customTa.value.trim()
+            ? customTa.value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean)
+            : [];
+
+        // Fetch famous places for all locations
+        const placesCacheKey = cacheKey('places', state.locations.join(','));
+        let famousPlaces = cacheGet(placesCacheKey);
+        if (!famousPlaces) {
+            famousPlaces = await fetchFamousPlaces(state.config, state.locations, onSwitch);
+            cacheSet(placesCacheKey, famousPlaces);
+        }
+
+        // Enrich custom places with AI descriptions if any
+        let customPlaceObjects = [];
+        if (customNames.length) {
+            const enrichCacheKey = cacheKey('enrich', customNames.join(','), state.locations.join(','));
+            let enriched = cacheGet(enrichCacheKey);
+            if (!enriched) {
+                try {
+                    enriched = await enrichCustomPlaces(state.config, customNames, state.locations[0] || '', onSwitch);
+                    cacheSet(enrichCacheKey, enriched);
+                } catch {
+                    // Fallback: create stub objects
+                    enriched = customNames.map(name => ({
+                        name, location: state.locations[0] || '',
+                        shortDesc: 'A must-visit place on your itinerary.',
+                        category: 'Heritage'
+                    }));
                 }
-                customPreSelected.push(place.name);
+            }
+            // Merge enriched data — if famous places already has it, update shortDesc
+            customNames.forEach(name => {
+                const enrichedData = enriched.find(e => e.name.toLowerCase() === name.toLowerCase()) || {};
+                const existingFamous = famousPlaces.find(p => p.name.toLowerCase() === name.toLowerCase());
+                if (existingFamous) {
+                    // Update with enriched data if shortDesc missing
+                    if (!existingFamous.shortDesc && enrichedData.shortDesc) {
+                        existingFamous.shortDesc = enrichedData.shortDesc;
+                    }
+                    customPlaceObjects.push(existingFamous);
+                } else {
+                    customPlaceObjects.push({
+                        name: enrichedData.name || name,
+                        location: enrichedData.location || state.locations[0] || '',
+                        shortDesc: enrichedData.shortDesc || 'A must-visit place on your itinerary.',
+                        category: enrichedData.category || 'Heritage',
+                    });
+                }
             });
         }
 
+        // Build final place list: custom places first (pinned), then remaining famous places
+        const customNamesLower = customNames.map(n => n.toLowerCase());
+        const remainingFamous = famousPlaces.filter(p => !customNamesLower.includes(p.name.toLowerCase()));
+        state.places = [...customPlaceObjects, ...remainingFamous];
+
+        // Auto-select all custom places
+        state.selectedPlaces = [];
+        customPlaceObjects.forEach(place => {
+            if (!state.selectedPlaces.find(p => p.name === place.name)) {
+                state.selectedPlaces.push(place);
+            }
+        });
+
         setProgress(1, STAGES[1]);
-        // Fetch images for all places including custom ones (with location context)
+        // Fetch images for all places with location context
         const allItems = state.places.map(p => ({ name: p.name, location: p.location || state.locations[0] || '' }));
         const missing = allItems.filter(p => !state.imageCache[p.name]);
         if (missing.length) {
@@ -318,11 +362,11 @@ async function startPlanning() {
         hideProgress();
         renderDiscoveryScreen();
 
-        // After rendering, ensure custom places are visually selected
-        if (customPreSelected.length) {
+        // After render, visually mark custom places as selected
+        if (customPlaceObjects.length) {
             setTimeout(() => {
                 document.querySelectorAll('.place-card').forEach(card => {
-                    if (customPreSelected.includes(card.dataset.name)) {
+                    if (customNamesLower.includes(card.dataset.name?.toLowerCase())) {
                         card.classList.add('selected');
                     }
                 });
