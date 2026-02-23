@@ -2,8 +2,7 @@
 
 > An AI-powered travel itinerary generator with interactive maps, real-time place discovery, PDF export, and trip sharing — built with Vanilla JS, Leaflet, and Google Gemini / Groq AI.
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/YOUR-BADGE-ID/deploy-status)](https://app.netlify.com/sites/YOUR-SITE/deploys)
-
+[![Netlify Status](https://api.netlify.com/api/v1/badges/b6c9161e-4862-4733-a554-e2911e243341/deploy-status)](https://app.netlify.com/projects/my-trip-genie/deploys)
 ---
 
 ## 📑 Table of Contents
@@ -40,7 +39,7 @@ Users can:
 
 ## Live Demo
 
-> _Add your Netlify URL here once deployed_
+> https://my-trip-genie.netlify.app
 
 ---
 
