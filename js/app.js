@@ -188,6 +188,29 @@ function renderChips() {
 // ── Fallback image ────────────────────────────────────────────
 function fallbackImg(name) { return picsumFallback(name); }
 
+// Loose place name similarity — strips punctuation, checks word overlap
+function placesAreSimilar(a, b) {
+    const normalize = str => str
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')   // strip punctuation
+        .replace(/\b(the|a|an|of|and|&|mall|centre|center|complex|park|garden|fort|temple|masjid|mandir|market|bazar|bazaar|chowk)\b/g, '') // strip generic suffixes
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const na = normalize(a);
+    const nb = normalize(b);
+
+    if (na === nb) return true;
+
+    // Token overlap: if 60%+ of the shorter name's tokens appear in the longer
+    const tokA = na.split(' ').filter(Boolean);
+    const tokB = nb.split(' ').filter(Boolean);
+    const [shorter, longer] = tokA.length <= tokB.length ? [tokA, tokB] : [tokB, tokA];
+    if (shorter.length === 0) return false;
+    const matches = shorter.filter(t => longer.includes(t)).length;
+    return matches / shorter.length >= 0.6;
+}
+
 // ── Config loading ────────────────────────────────────────────
 function loadConfig() {
     const isPlaceholder = v => !v || v.startsWith('PASTE_YOUR_');
@@ -338,9 +361,12 @@ async function startPlanning() {
         }
 
         // Build final place list: custom places first (pinned), then remaining famous places
-        const customNamesLower = customNames.map(n => n.toLowerCase());
-        const remainingFamous = famousPlaces.filter(p => !customNamesLower.includes(p.name.toLowerCase()));
+        // Use fuzzy dedup so "DB Mall" and "DB City Mall" don't both appear
+        const remainingFamous = famousPlaces.filter(famous =>
+            !customPlaceObjects.some(custom => placesAreSimilar(custom.name, famous.name))
+        );
         state.places = [...customPlaceObjects, ...remainingFamous];
+        const customNamesLower = customNames.map(n => n.toLowerCase());
 
         // Auto-select all custom places
         state.selectedPlaces = [];
@@ -398,7 +424,12 @@ function renderDiscoveryScreen() {
         cardRow.className = 'place-card-grid';
         section.appendChild(cardRow);
 
-        locPlaces.forEach(place => renderPlaceCard(place, cardRow));
+        const seenInSection = [];
+        locPlaces.forEach(place => {
+            if (seenInSection.some(s => placesAreSimilar(s, place.name))) return;
+            seenInSection.push(place.name);
+            renderPlaceCard(place, cardRow);
+        });
 
         // Load More button
         const loadMoreBtn = document.createElement('button');
@@ -410,9 +441,10 @@ function renderDiscoveryScreen() {
         grid.appendChild(section);
     });
 
-    // Auto mode: default true if nothing selected, false if selections exist
+    // Auto mode: default true if nothing selected
     if (state.selectedPlaces.length === 0) {
         state.autoMode = true;
+        _autoModeManuallySet = false;
     }
 
     // Rebind auto toggle
@@ -424,6 +456,12 @@ function renderDiscoveryScreen() {
     document.getElementById('discovery-grid').classList.toggle('auto-mode', state.autoMode);
     newToggle.addEventListener('change', () => {
         state.autoMode = newToggle.checked;
+        _autoModeManuallySet = true; // user explicitly touched the toggle
+        // If user manually turns ON auto, clear all selections
+        if (state.autoMode) {
+            state.selectedPlaces = [];
+            document.querySelectorAll('.place-card.selected').forEach(c => c.classList.remove('selected'));
+        }
         document.getElementById('discovery-grid').classList.toggle('auto-mode', state.autoMode);
         updateSelectionCount();
     });
@@ -490,9 +528,11 @@ async function loadMorePlaces(loc, section, btn) {
         state.places.push(...more);
         const cardRow = section.querySelector('.place-card-grid');
         // Fetch images for new places
-        const newNames = more.map(p => p.name).filter(n => !state.imageCache[n]);
-        if (newNames.length) {
-            const imgs = await fetchPlaceImages(newNames, state.config.unsplashKey);
+        const newItems = more
+            .filter(p => !state.imageCache[p.name])
+            .map(p => ({ name: p.name, location: p.location || loc }));
+        if (newItems.length) {
+            const imgs = await fetchPlaceImages(newItems, state.config.unsplashKey);
             Object.assign(state.imageCache, imgs);
         }
         more.forEach(place => renderPlaceCard(place, cardRow));
@@ -532,7 +572,9 @@ async function doNearbySearch() {
         }
 
         results.forEach(place => {
-            if (!state.places.find(p => p.name === place.name)) state.places.push(place);
+            const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
+            if (!isDup) state.places.push(place);
+            // Still render in nearby results even if already in main list (user may want to select it)
             renderPlaceCard(place, resultsDiv, true);
         });
         showToast(`Found ${results.length} places near "${query}"`, 'success');
@@ -542,10 +584,12 @@ async function doNearbySearch() {
     }
 }
 
+// Track if user has manually overridden auto-mode via the toggle
+let _autoModeManuallySet = false;
+
 function togglePlaceSelection(card, place) {
-    // If auto mode is manually on, ignore card clicks
-    const autoToggleEl = document.getElementById('auto-toggle');
-    if (state.autoMode && autoToggleEl && autoToggleEl.checked) return;
+    // If auto mode is manually forced ON by user, block card selection
+    if (_autoModeManuallySet && state.autoMode) return;
 
     const idx = state.selectedPlaces.findIndex(p => p.name === place.name);
     if (idx === -1) {
@@ -556,16 +600,18 @@ function togglePlaceSelection(card, place) {
         card.classList.remove('selected');
     }
 
-    // Smart auto-mode: if nothing selected → auto on; if something selected → auto off
-    const autoToggle = document.querySelector('#auto-toggle, .toggle-switch input');
-    if (state.selectedPlaces.length === 0) {
-        state.autoMode = true;
-        if (autoToggle) autoToggle.checked = true;
-        document.getElementById('discovery-grid').classList.add('auto-mode');
-    } else {
-        state.autoMode = false;
-        if (autoToggle) autoToggle.checked = false;
-        document.getElementById('discovery-grid').classList.remove('auto-mode');
+    // Smart auto-mode sync (only if user hasn't manually overridden)
+    if (!_autoModeManuallySet) {
+        const autoToggle = document.getElementById('auto-toggle');
+        if (state.selectedPlaces.length === 0) {
+            state.autoMode = true;
+            if (autoToggle) autoToggle.checked = true;
+            document.getElementById('discovery-grid').classList.add('auto-mode');
+        } else {
+            state.autoMode = false;
+            if (autoToggle) autoToggle.checked = false;
+            document.getElementById('discovery-grid').classList.remove('auto-mode');
+        }
     }
     updateSelectionCount();
 }

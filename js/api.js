@@ -202,14 +202,47 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
     for (const { name, location } of items) {
         try {
             const cleanName = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
-            const cleanLoc = (location || '').replace(/[^a-zA-Z0-9 ]/g, '').trim();
-            // Include city name for much more accurate results (e.g. "National Museum New Delhi")
-            const queryStr = [cleanName, cleanLoc, 'landmark'].filter(Boolean).join(' ');
-            const url = `${UNSPLASH_BASE}?query=${encodeURIComponent(queryStr)}&per_page=1&orientation=landscape&client_id=${unsplashKey}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            cache[name] = data.results?.[0]?.urls?.small || picsumFallback(name);
+            // Extract just the city from location (drop country/state noise)
+            const cityOnly = (location || '')
+                .split(',')[0]
+                .replace(/[^a-zA-Z0-9 ]/g, '')
+                .trim();
+
+            // Strategy: try specific query first (place + city), fall back to place-only
+            const specificQuery = [cleanName, cityOnly].filter(Boolean).join(' ');
+            const fallbackQuery = cleanName;
+
+            const tryFetch = async (query) => {
+                const url = `${UNSPLASH_BASE}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&client_id=${unsplashKey}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                return data.results || [];
+            };
+
+            // Fetch with specific query (name + city)
+            let results = await tryFetch(specificQuery);
+
+            // If no results or suspiciously generic, retry with name only
+            if (!results.length) {
+                results = await tryFetch(fallbackQuery);
+            }
+
+            // Pick best result: prefer photos whose description/alt contains place name keywords
+            const nameWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 3);
+            const scored = results.map(r => {
+                const haystack = [
+                    r.description || '',
+                    r.alt_description || '',
+                    r.tags?.map(t => t.title).join(' ') || ''
+                ].join(' ').toLowerCase();
+                const score = nameWords.filter(w => haystack.includes(w)).length;
+                return { url: r.urls?.small, score };
+            }).filter(r => r.url);
+
+            scored.sort((a, b) => b.score - a.score);
+            cache[name] = scored[0]?.url || picsumFallback(name);
+
         } catch (err) {
             console.warn(`[Unsplash] "${name}":`, err.message);
             cache[name] = picsumFallback(name);

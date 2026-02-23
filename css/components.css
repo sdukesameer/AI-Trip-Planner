@@ -68,6 +68,11 @@
   margin: 0 auto 60px;
   padding: 40px;
   animation: slideUp 0.7s ease;
+  overflow: hidden;
+  /* prevent any child from bleeding out */
+  box-sizing: border-box;
+  width: calc(100% - 48px);
+  /* account for container padding on mobile */
 }
 
 @keyframes slideUp {
@@ -86,6 +91,22 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.date-row .modal-field {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.date-row input[type="date"] {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .plan-btn-wrap {
@@ -745,17 +766,24 @@ input:checked+.toggle-thumb::after {
   .date-row {
     grid-template-columns: 1fr;
     gap: 12px;
+    width: 100%;
   }
 
   .date-row .modal-field {
     width: 100%;
     min-width: 0;
+    overflow: hidden;
   }
 
   .date-row input[type="date"] {
     width: 100%;
+    max-width: 100%;
     min-width: 0;
     box-sizing: border-box;
+    -webkit-appearance: none;
+    appearance: none;
+    font-size: 16px;
+    /* prevents iOS Safari auto-zoom on focus */
   }
 
   .discovery-header {
@@ -1305,21 +1333,27 @@ input:checked+.toggle-thumb::after {
   }
 
   /* Input card */
-  .input-card {
-    padding: 20px 16px;
-    border-radius: 16px;
-  }
-
   .date-row {
     grid-template-columns: 1fr;
-    gap: 12px;
+    width: 100%;
+    overflow: hidden;
   }
 
-  .date-row .modal-field,
   .date-row input[type="date"] {
-    min-width: 0;
+    -webkit-appearance: none;
+    appearance: none;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     box-sizing: border-box;
+    font-size: 16px;
+    padding: 12px 14px;
+  }
+
+  .input-card {
+    width: calc(100% - 32px);
+    box-sizing: border-box;
+    overflow: hidden;
   }
 
   /* Discovery */
