@@ -41,7 +41,7 @@ const state = {
     endDate: '',
     places: [],
     imageCache: {},
-    autoMode: false,
+    autoMode: true,
     selectedPlaces: [],
     itinerary: null,
     aiProvider: '',
@@ -277,18 +277,6 @@ async function startPlanning() {
     if (!sd || !ed || new Date(ed) < new Date(sd)) { showToast('Please set valid trip dates 📅', 'error'); return; }
     state.startDate = sd; state.endDate = ed;
 
-    // Ingest custom places from home page textarea
-    const customTa = document.getElementById('home-custom-places');
-    if (customTa && customTa.value.trim()) {
-        const names = customTa.value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
-        names.forEach(name => {
-            const existing = state.places.find(p => p.name.toLowerCase() === name.toLowerCase());
-            const place = existing || { name, location: state.locations[0] || '', shortDesc: '', category: 'Heritage' };
-            if (!existing) state.places.push(place);
-            if (!state.selectedPlaces.find(p => p.name === place.name)) state.selectedPlaces.push(place);
-        });
-    }
-
     showProgress();
     const onSwitch = name => { showAIBadge(name); showToast(`Trying ${name}…`, 'info'); };
 
@@ -302,9 +290,26 @@ async function startPlanning() {
         }
         state.places = places;
 
+        // Ingest custom places from home page textarea
+        const customTa = document.getElementById('home-custom-places');
+        const customPreSelected = [];
+        if (customTa && customTa.value.trim()) {
+            const names = customTa.value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+            names.forEach(name => {
+                const existing = state.places.find(p => p.name.toLowerCase() === name.toLowerCase());
+                const place = existing || { name, location: state.locations[0] || '', shortDesc: '', category: 'Heritage' };
+                if (!existing) state.places.push(place);
+                if (!state.selectedPlaces.find(p => p.name === place.name)) {
+                    state.selectedPlaces.push(place);
+                }
+                customPreSelected.push(place.name);
+            });
+        }
+
         setProgress(1, STAGES[1]);
-        const names = [...new Set(places.map(p => p.name))];
-        const missing = names.filter(n => !state.imageCache[n]);
+        // Fetch images for all places including custom ones (with location context)
+        const allItems = state.places.map(p => ({ name: p.name, location: p.location || state.locations[0] || '' }));
+        const missing = allItems.filter(p => !state.imageCache[p.name]);
         if (missing.length) {
             const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
             Object.assign(state.imageCache, imgs);
@@ -312,6 +317,18 @@ async function startPlanning() {
 
         hideProgress();
         renderDiscoveryScreen();
+
+        // After rendering, ensure custom places are visually selected
+        if (customPreSelected.length) {
+            setTimeout(() => {
+                document.querySelectorAll('.place-card').forEach(card => {
+                    if (customPreSelected.includes(card.dataset.name)) {
+                        card.classList.add('selected');
+                    }
+                });
+            }, 50);
+        }
+
         showScreen('screen-discovery');
 
     } catch (err) { hideProgress(); showToast('Error: ' + err.message, 'error'); console.error(err); }
@@ -349,12 +366,18 @@ function renderDiscoveryScreen() {
         grid.appendChild(section);
     });
 
+    // Auto mode: default true if nothing selected, false if selections exist
+    if (state.selectedPlaces.length === 0) {
+        state.autoMode = true;
+    }
+
     // Rebind auto toggle
     const autoToggle = document.getElementById('auto-toggle');
     autoToggle.checked = state.autoMode;
     const newToggle = autoToggle.cloneNode(true);
     newToggle.checked = state.autoMode;
     autoToggle.replaceWith(newToggle);
+    document.getElementById('discovery-grid').classList.toggle('auto-mode', state.autoMode);
     newToggle.addEventListener('change', () => {
         state.autoMode = newToggle.checked;
         document.getElementById('discovery-grid').classList.toggle('auto-mode', state.autoMode);
@@ -476,10 +499,30 @@ async function doNearbySearch() {
 }
 
 function togglePlaceSelection(card, place) {
-    if (state.autoMode) return;
+    // If auto mode is manually on, ignore card clicks
+    const autoToggleEl = document.getElementById('auto-toggle');
+    if (state.autoMode && autoToggleEl && autoToggleEl.checked) return;
+
     const idx = state.selectedPlaces.findIndex(p => p.name === place.name);
-    if (idx === -1) { state.selectedPlaces.push(place); card.classList.add('selected'); }
-    else { state.selectedPlaces.splice(idx, 1); card.classList.remove('selected'); }
+    if (idx === -1) {
+        state.selectedPlaces.push(place);
+        card.classList.add('selected');
+    } else {
+        state.selectedPlaces.splice(idx, 1);
+        card.classList.remove('selected');
+    }
+
+    // Smart auto-mode: if nothing selected → auto on; if something selected → auto off
+    const autoToggle = document.querySelector('#auto-toggle, .toggle-switch input');
+    if (state.selectedPlaces.length === 0) {
+        state.autoMode = true;
+        if (autoToggle) autoToggle.checked = true;
+        document.getElementById('discovery-grid').classList.add('auto-mode');
+    } else {
+        state.autoMode = false;
+        if (autoToggle) autoToggle.checked = false;
+        document.getElementById('discovery-grid').classList.remove('auto-mode');
+    }
     updateSelectionCount();
 }
 

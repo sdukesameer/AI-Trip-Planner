@@ -744,6 +744,18 @@ input:checked+.toggle-thumb::after {
 
   .date-row {
     grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .date-row .modal-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .date-row input[type="date"] {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
   }
 
   .discovery-header {
@@ -1290,6 +1302,13 @@ input:checked+.toggle-thumb::after {
   .date-row {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .date-row .modal-field,
+  .date-row input[type="date"] {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   /* Discovery */
