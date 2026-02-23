@@ -39,7 +39,7 @@ Users can:
 
 ## Live Demo
 
-> https://my-trip-genie.netlify.app
+> https://ai-trip-genie.netlify.app
 
 ---
 
