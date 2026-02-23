@@ -1,58 +1,83 @@
 // ============================================================
-//  download.js — Itinerary export (PDF + clipboard)
+//  download.js — Itinerary export (rich PDF + emoji clipboard)
 // ============================================================
 
-export function generateTextItinerary(itinerary, locations, startDate, endDate) {
-    const lines = [];
-    const locStr = locations.map(l => `📍 ${l}`).join(' · ');
+const DAY_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1'];
+const DAY_EMOJIS = ['🟦', '🟩', '🟨', '🟥', '🟪', '🩷', '🩵', '🟧', '🟢', '🔵'];
+const FLAG_MAP = { 'India': '🇮🇳', 'France': '🇫🇷', 'USA': '🇺🇸', 'UK': '🇬🇧', 'Japan': '🇯🇵', 'Italy': '🇮🇹', 'Spain': '🇪🇸', 'Germany': '🇩🇪', 'Australia': '🇦🇺', 'UAE': '🇦🇪' };
 
-    lines.push(`🗺️  AI TRIP ITINERARY ✨`);
-    lines.push(`📅 Dates: ${formatDateRange(startDate, endDate)}`);
-    lines.push(`📍 Locations: ${locations.join(', ')}`);
-    lines.push('─'.repeat(50));
-    lines.push('');
-
-    if (itinerary.summary) {
-        lines.push(`💡 ${itinerary.summary}`);
-        lines.push('');
+// ── Helper: pick country flag from location name ──────────────
+function getFlag(locations) {
+    for (const [country, flag] of Object.entries(FLAG_MAP)) {
+        if (locations.some(l => l.toLowerCase().includes(country.toLowerCase()))) return flag;
     }
+    return '🗺️';
+}
 
-    const dayEmojis = ['🟦', '🟪', '🟨', '🟧', '🟥', '🟩', '🔵', '🔴', '🟤', '⚫'];
+// ── Rich emoji copy text (matches user's personal format) ─────
+export function generateTextItinerary(itinerary, locations, startDate, endDate) {
+    const flag = getFlag(locations);
+    const locStr = locations.join(' + ').toUpperCase();
+    const dateStr = formatDateRange(startDate, endDate);
+    const lines = [];
 
-    itinerary.days.forEach((day, idx) => {
-        const emoji = dayEmojis[idx % dayEmojis.length];
-        lines.push(`${emoji} DAY ${day.day} — ${day.theme?.toUpperCase() || ''} 🌟`);
-        lines.push(`🗓️  ${day.date}${day.location ? ' · ' + day.location : ''}`);
+    lines.push(`${flag} ${locStr} TRIP ITINERARY ✨`);
+    lines.push('');
+    lines.push(`📅 Dates: ${dateStr}`);
+    lines.push(`📍 Destinations: ${locations.join(', ')}`);
+    if (itinerary.summary) lines.push(`💬 ${itinerary.summary}`);
+    lines.push('');
+    lines.push('⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻');
+
+    itinerary.days.forEach((day, dIdx) => {
+        const emoji = DAY_EMOJIS[dIdx % DAY_EMOJIS.length];
+        const dayDate = formatWeekday(day.date);
+        lines.push('');
+        lines.push(`${emoji} DAY ${day.day} — ${(day.theme || 'EXPLORE').toUpperCase()} ✨`);
+        lines.push(`🗓️ ${dayDate}${day.location ? '  |  📍 ' + day.location : ''}`);
         lines.push('');
 
         day.places.forEach((place, pIdx) => {
-            lines.push(`  ${pIdx + 1}. 📌 ${place.name}`);
+            const timePrefix = place.arrivalTime ? `${place.arrivalTime}` : '';
+            const durStr = place.visitDuration ? ` (${place.visitDuration})` : '';
+
+            if (timePrefix) {
+                lines.push(`${timePrefix}  →  ${place.name}${durStr}`);
+            } else {
+                lines.push(`${pIdx + 1}. ${place.name}${durStr}`);
+            }
+
+            // Meta info
+            const meta = [];
+            if (place.openingHours) meta.push(`⏰ ${place.openingHours}`);
+            if (place.entryFee) meta.push(`💰 ${place.entryFee}`);
+            if (place.bestTime) meta.push(`🌅 Best: ${place.bestTime}`);
+            if (meta.length) lines.push(`   ${meta.join('  |  ')}`);
+
+            if (place.closedNote) lines.push(`   ⚠️  ${place.closedNote}`);
+
             if (place.desc) {
-                lines.push(`     ${place.desc.slice(0, 120)}${place.desc.length > 120 ? '...' : ''}`);
+                const short = place.desc.length > 120 ? place.desc.slice(0, 120) + '…' : place.desc;
+                lines.push(`   📝 ${short}`);
             }
-            if (place.openingHours || place.entryFee) {
-                const info = [];
-                if (place.openingHours) info.push(`⏰ ${place.openingHours}`);
-                if (place.entryFee) info.push(`💰 ${place.entryFee}`);
-                lines.push(`     ${info.join(' | ')}`);
-            }
-            if (place.commute_from_prev && pIdx > 0) {
+
+            // Commute from previous
+            if (pIdx > 0 && place.commute_from_prev) {
                 const c = place.commute_from_prev;
-                const commutes = [];
-                if (c.walk && c.walk !== 'N/A') commutes.push(`🚶 ${c.walk}`);
-                if (c.cab && c.cab !== 'N/A') commutes.push(`🚕 Cab: ${c.cab}`);
-                if (c.metro && c.metro !== 'N/A') commutes.push(`🚇 ${c.metro}`);
-                if (commutes.length) {
-                    lines.push(`     ↳ From prev: ${commutes.join(' | ')}`);
-                }
+                const cv = [];
+                if (c.walk && c.walk !== 'N/A') cv.push(`🚶 ${c.walk}`);
+                if (c.metro && c.metro !== 'N/A') cv.push(`🚇 ${c.metro}`);
+                if (c.cab && c.cab !== 'N/A') cv.push(`🚕 Cab ${c.cab}`);
+                if (cv.length) lines.push(`   ↳ Getting there: ${cv.join('  |  ')}`);
             }
             lines.push('');
         });
-        lines.push('─'.repeat(50));
-        lines.push('');
+
+        lines.push('⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻⸻');
     });
 
-    lines.push('Generated by AI Trip Planner ✈️');
+    lines.push('');
+    lines.push('🤖 Generated by AI Trip Planner  •  https://my-trip-genie.netlify.app');
     return lines.join('\n');
 }
 
@@ -61,39 +86,8 @@ export function downloadAsText(itinerary, locations, startDate, endDate) {
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `trip-itinerary-${startDate}-to-${endDate}.txt`;
-    a.click();
+    a.href = url; a.download = `trip-${locations[0]?.replace(/\s+/g, '-') || 'itinerary'}-${startDate}.txt`; a.click();
     URL.revokeObjectURL(url);
-}
-
-export async function downloadAsPDF(itinerary, locations, startDate, endDate) {
-    // Load jsPDF from CDN if not already loaded
-    if (!window.jspdf) {
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
-    }
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const text = generateTextItinerary(itinerary, locations, startDate, endDate);
-    const margin = 15;
-    const pageW = doc.internal.pageSize.getWidth() - margin * 2;
-    const lines = doc.splitTextToSize(text.replace(/[^\x00-\x7F]/g, (c) => emojiToText(c)), pageW);
-
-    let y = margin;
-    const lineH = 5;
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-
-    lines.forEach(line => {
-        if (y + lineH > doc.internal.pageSize.getHeight() - margin) {
-            doc.addPage();
-            y = margin;
-        }
-        doc.text(line, margin, y);
-        y += lineH;
-    });
-
-    doc.save(`trip-itinerary-${startDate}-to-${endDate}.pdf`);
 }
 
 export async function copyToClipboard(itinerary, locations, startDate, endDate) {
@@ -101,12 +95,228 @@ export async function copyToClipboard(itinerary, locations, startDate, endDate) 
     await navigator.clipboard.writeText(text);
 }
 
+// ── PDF with thumbnails ───────────────────────────────────────
+async function urlToBase64(url) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const blob = await res.blob();
+        return new Promise(resolve => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(fr.result);
+            fr.onerror = () => resolve(null);
+            fr.readAsDataURL(blob);
+        });
+    } catch { return null; }
+}
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
+}
+
+export async function downloadAsPDF(itinerary, locations, startDate, endDate, imageCache = {}) {
+    if (!window.jspdf) {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const PW = doc.internal.pageSize.getWidth();
+    const PH = doc.internal.pageSize.getHeight();
+    const ML = 14;
+    const MR = 14;
+    const CW = PW - ML - MR;
+    let y = 0;
+
+    // Pre-fetch all images as base64
+    const allPlaceNames = [...new Set(itinerary.days.flatMap(d => d.places.map(p => p.name)))];
+    const b64Cache = {};
+    await Promise.all(allPlaceNames.map(async name => {
+        const url = imageCache[name];
+        if (url && url.startsWith('http')) {
+            b64Cache[name] = await urlToBase64(url);
+        }
+    }));
+
+    function newPage() { doc.addPage(); y = 14; addPageFooter(); }
+    function checkY(needed = 10) { if (y + needed > PH - 20) newPage(); }
+    function setFill(hex) { const [r, g, b] = hexToRgb(hex); doc.setFillColor(r, g, b); }
+    function setTextCol(hex) { const [r, g, b] = hexToRgb(hex); doc.setTextColor(r, g, b); }
+    function setDrawCol(hex) { const [r, g, b] = hexToRgb(hex); doc.setDrawColor(r, g, b); }
+
+    function addPageFooter() {
+        setTextCol('#94a3b8');
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+        doc.text('AI Trip Planner  •  https://my-trip-genie.netlify.app', ML, PH - 8);
+        doc.text(`${doc.internal.getCurrentPageInfo().pageNumber}`, PW - ML, PH - 8, { align: 'right' });
+    }
+
+    // ── Cover Header ────────────────────────────────────────────
+    setFill('#0f0c29'); doc.rect(0, 0, PW, 58, 'F');
+    setFill('#4f46e5'); doc.roundedRect(0, 46, PW, 13, 0, 0, 'F');
+
+    setTextCol('#ffffff');
+    doc.setFontSize(24); doc.setFont('helvetica', 'bold');
+    doc.text('AI TRIP PLANNER', ML, 19);
+
+    doc.setFontSize(11); doc.setFont('helvetica', 'normal');
+    setTextCol('#c7d2fe');
+    doc.text(formatDateRange(startDate, endDate), ML, 30);
+
+    doc.setFontSize(10); setTextCol('#a5b4fc');
+    doc.text(locations.join('  +  '), ML, 40);
+
+    if (itinerary.summary) {
+        doc.setFontSize(8.5); doc.setFont('helvetica', 'italic'); setTextCol('#e0e7ff');
+        const sumLines = doc.splitTextToSize(itinerary.summary, CW);
+        doc.text(sumLines, ML, 51);
+    }
+
+    y = 68;
+
+    // ── Days ────────────────────────────────────────────────────
+    for (const [dayIdx, day] of itinerary.days.entries()) {
+        const color = DAY_COLORS[dayIdx % DAY_COLORS.length];
+        checkY(24);
+
+        // Day banner
+        setFill(color);
+        doc.roundedRect(ML, y, CW, 11, 2, 2, 'F');
+        setTextCol('#ffffff');
+        doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+        doc.text(`  DAY ${day.day}  —  ${(day.theme || 'EXPLORE').toUpperCase()}`, ML + 3, y + 7.5);
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+        const dayMeta = `${day.date}${day.location ? '  •  ' + day.location : ''}`;
+        doc.text(dayMeta, ML + CW - 3, y + 7.5, { align: 'right' });
+        y += 15;
+
+        // ── Places ──────────────────────────────────────────────
+        for (const [pIdx, place] of day.places.entries()) {
+            const IMG_W = 38, IMG_H = 26;
+            const hasImg = !!b64Cache[place.name];
+            const textX = hasImg ? ML + IMG_W + 4 : ML + 10;
+            const textW = hasImg ? CW - IMG_W - 4 : CW - 10;
+
+            checkY(hasImg ? IMG_H + 8 : 28);
+
+            // Thumbnail
+            if (hasImg) {
+                try {
+                    doc.addImage(b64Cache[place.name], 'JPEG', ML, y, IMG_W, IMG_H, undefined, 'FAST');
+                    doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.3);
+                    doc.rect(ML, y, IMG_W, IMG_H);
+                } catch { /* skip bad image */ }
+            }
+
+            // Number badge
+            const [cr, cg, cb] = hexToRgb(color);
+            doc.setFillColor(Math.round(cr * 0.15 + 255 * 0.85), Math.round(cg * 0.15 + 255 * 0.85), Math.round(cb * 0.15 + 255 * 0.85));
+            doc.roundedRect(textX, y, 7, 7, 1.5, 1.5, 'F');
+            setTextCol(color);
+            doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+            doc.text(String(pIdx + 1), textX + 3.5, y + 5, { align: 'center' });
+
+            // Arrival time pill
+            let nameX = textX + 9;
+            if (place.arrivalTime) {
+                setTextCol(color);
+                doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
+                doc.text(place.arrivalTime, textX + 9, y + 5.5);
+                nameX = textX + 9 + doc.getStringUnitWidth(place.arrivalTime) * 8.5 * 0.352 + 3;
+            }
+
+            // Place name
+            setTextCol('#1e293b');
+            doc.setFontSize(10.5); doc.setFont('helvetica', 'bold');
+            const nameLines = doc.splitTextToSize(place.name, textW - (nameX - textX) - 2);
+            doc.text(nameLines, nameX, y + 5.5);
+
+            // Duration + category
+            doc.setFontSize(7); setTextCol('#64748b'); doc.setFont('helvetica', 'normal');
+            const rightStr = [place.visitDuration ? 'Dur: ' + place.visitDuration : '', place.category || ''].filter(Boolean).join('  ');
+            if (rightStr) doc.text(rightStr, ML + CW, y + 5.5, { align: 'right' });
+
+            y += 9;
+
+            // Meta
+            const meta = [];
+            if (place.openingHours) meta.push(`Hours: ${place.openingHours}`);
+            if (place.entryFee) meta.push(`Cost: ${place.entryFee.replace(/₹/g, 'Rs. ')}`);
+            if (place.bestTime) meta.push(`Best: ${place.bestTime}`);
+            if (meta.length) {
+                setTextCol('#334155'); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+                const metaLine = doc.splitTextToSize(meta.join('   |   '), textW);
+                doc.text(metaLine, textX + 10, y);
+                y += metaLine.length * 4.5;
+            }
+
+            // Closed note
+            if (place.closedNote) {
+                checkY(8);
+                doc.setFillColor(254, 243, 199);
+                doc.roundedRect(textX + 10, y - 2, textW - 10, 7, 1, 1, 'F');
+                setTextCol('#92400e'); doc.setFontSize(7.5);
+                const cnLines = doc.splitTextToSize('NOTE: ' + place.closedNote, textW - 14);
+                doc.text(cnLines, textX + 12, y + 2);
+                y += cnLines.length * 4.5 + 2;
+            }
+
+            // Description
+            if (place.desc) {
+                checkY(10);
+                setTextCol('#334155'); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+                const safeDesc = place.desc.replace(/₹/g, 'Rs. ');
+                const descLines = doc.splitTextToSize(safeDesc, textW - 10).slice(0, 3);
+                doc.text(descLines, textX + 10, y);
+                y += descLines.length * 4.5 + 2;
+            }
+
+            // Ensure we're at least below the image
+            if (hasImg) y = Math.max(y, ML + IMG_H + (dayIdx === 0 && pIdx === 0 ? 68 - 68 : 0));
+            // relative to current start of this place block
+            const blockStart = y - (meta.length * 4.5) - (place.closedNote ? 8 : 0) - (place.desc ? 16 : 0) - 9;
+            if (hasImg && y < blockStart + IMG_H + 3) y = blockStart + IMG_H + 3;
+
+            // Commute
+            if (pIdx > 0 && place.commute_from_prev) {
+                const c = place.commute_from_prev;
+                const cv = [];
+                if (c.walk && c.walk !== 'N/A') cv.push('Walk: ' + c.walk);
+                if (c.metro && c.metro !== 'N/A') cv.push('Metro: ' + c.metro.replace(/₹/g, 'Rs. '));
+                if (c.cab && c.cab !== 'N/A') cv.push('Cab: ' + c.cab.replace(/₹/g, 'Rs. '));
+                if (cv.length) {
+                    doc.setFillColor(241, 245, 249);
+                    checkY(8);
+                    doc.roundedRect(ML + 10, y - 1, CW - 10, 6.5, 1, 1, 'F');
+                    setTextCol('#475569'); doc.setFontSize(7.5);
+                    doc.text('Getting there:  ' + cv.join('   |   '), ML + 12, y + 3.5);
+                    y += 8;
+                }
+            }
+
+            y += 4;
+            setDrawCol('#e2e8f0'); doc.setLineWidth(0.3);
+            doc.setLineDashPattern([2, 2], 0);
+            doc.line(ML + 10, y, ML + CW, y);
+            doc.setLineDashPattern([], 0);
+            y += 5;
+        }
+        y += 6;
+    }
+
+    addPageFooter();
+    const fname = `trip-${locations[0]?.replace(/\s+/g, '-') || 'itinerary'}-${startDate}.pdf`;
+    doc.save(fname);
+}
+
+// ── Helpers ───────────────────────────────────────────────────
 function loadScript(src) {
+    if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
     return new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = src;
-        s.onload = resolve;
-        s.onerror = reject;
+        s.src = src; s.onload = resolve; s.onerror = reject;
         document.head.appendChild(s);
     });
 }
@@ -116,7 +326,7 @@ function formatDateRange(start, end) {
     return `${new Date(start).toLocaleDateString('en-IN', opts)} – ${new Date(end).toLocaleDateString('en-IN', opts)}`;
 }
 
-function emojiToText(char) {
-    // strip emoji that jsPDF can't render — they've already appeared as beautiful text above
-    return '';
+function formatWeekday(dateStr) {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }

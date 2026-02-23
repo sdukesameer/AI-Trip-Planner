@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
     <head>
         <meta charset="UTF-8">
@@ -8,7 +8,7 @@
         <meta name="description"
             content="AI-powered travel itinerary planner. Enter your destinations and dates to get a personalized day-wise trip plan with maps, images, and commute info.">
 
-        <!-- Leaflet CSS (OpenStreetMap) -->
+        <!-- Leaflet CSS -->
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
             integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
@@ -18,18 +18,22 @@
 
     <body>
 
-        <!-- ════════════════════════════ NAVBAR ════════════════════════════ -->
+        <!-- ══════════════════ NAVBAR ══════════════════════════ -->
         <nav class="navbar">
-            <div class="nav-logo">
+            <div class="nav-logo" id="home-logo" role="button" tabindex="0" title="Go home">
                 <span class="logo-icon">✈️</span>
                 <span>AI Trip Planner</span>
             </div>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <button class="btn btn-ghost btn-sm" id="settings-btn">⚙️ Settings</button>
+            <div class="nav-actions">
+                <button class="btn btn-ghost btn-sm" id="mytrips-btn" title="My saved trips">💾 My Trips</button>
+                <a class="btn btn-ghost btn-sm" id="docs-btn"
+                    href="https://github.com/sdukesameer/AI-Trip-Planner/blob/main/README.md" target="_blank"
+                    rel="noopener" title="Documentation">📖 Docs</a>
+                <button class="btn btn-ghost btn-sm icon-btn" id="theme-btn" title="Toggle theme">🌙</button>
             </div>
         </nav>
 
-        <!-- ════════════════════════ PROGRESS OVERLAY ══════════════════════ -->
+        <!-- ══════════════════ PROGRESS OVERLAY ═══════════════ -->
         <div id="progress-overlay" class="hidden">
             <div class="progress-card">
                 <div class="progress-airplane">✈️</div>
@@ -60,48 +64,57 @@
                         <div class="stage-dot-label">Map</div>
                     </div>
                 </div>
-                <!-- AI model indicator -->
                 <div class="ai-model-badge" id="ai-model-badge"
                     style="display:none;margin-top:16px;font-size:12px;color:var(--text-muted);"></div>
             </div>
         </div>
 
-        <!-- ════════════════════════ SETTINGS MODAL ════════════════════════ -->
-        <div id="settings-modal" class="modal-overlay hidden">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <div class="modal-title">⚙️ API Settings</div>
-                    <button class="modal-close" id="close-settings">✕</button>
-                </div>
+        <!-- ══════════════════ TOAST ═══════════════════════════ -->
+        <div id="toast-container"></div>
 
-                <div class="modal-field">
-                    <label class="input-label" for="key-gemini">Gemini API Key <span
-                            style="color:var(--danger)">*</span></label>
-                    <input class="input-field" type="password" id="key-gemini" placeholder="AIza...">
-                    <div class="modal-hint">Get free at <a href="https://aistudio.google.com" target="_blank"
-                            style="color:var(--accent);">aistudio.google.com</a></div>
+        <!-- ══════════════════════════════════════════════════════
+             PLACE DETAIL MODAL
+             ══════════════════════════════════════════════════════ -->
+        <div id="place-modal" class="modal-overlay hidden">
+            <div class="place-detail-card">
+                <button class="modal-close place-detail-close" id="place-modal-close">✕</button>
+                <div class="place-detail-img-wrap">
+                    <img id="place-detail-img" src="" alt="" loading="lazy">
+                    <div class="place-detail-category-badge" id="place-detail-category"></div>
                 </div>
-
-                <div class="modal-field">
-                    <label class="input-label" for="key-groq">Groq API Key (Fallback)</label>
-                    <input class="input-field" type="password" id="key-groq" placeholder="gsk_...">
-                    <div class="modal-hint">Get free at <a href="https://console.groq.com" target="_blank"
-                            style="color:var(--accent);">console.groq.com</a>. Used if Gemini fails or times out.</div>
-                </div>
-
-                <div style="display:flex;gap:12px;justify-content:flex-end;">
-                    <button class="btn btn-ghost" id="close-settings-x">Cancel</button>
-                    <button class="btn btn-primary" id="save-settings-btn">Save Keys</button>
+                <div class="place-detail-body">
+                    <div class="place-detail-header">
+                        <div class="place-detail-name" id="place-detail-name"></div>
+                        <a class="btn btn-primary btn-sm" id="place-detail-gmap" href="#" target="_blank"
+                            rel="noopener">🗺️
+                            Google Maps</a>
+                    </div>
+                    <div class="place-detail-meta" id="place-detail-meta"></div>
+                    <div class="place-detail-closed" id="place-detail-closed"></div>
+                    <div class="place-detail-desc" id="place-detail-desc"></div>
                 </div>
             </div>
         </div>
 
-        <!-- ════════════════════════ TOAST CONTAINER ═══════════════════════ -->
-        <div id="toast-container"></div>
+        <!-- ══════════════════════════════════════════════════════
+             MY TRIPS MODAL
+             ══════════════════════════════════════════════════════ -->
+        <div id="mytrips-modal" class="modal-overlay hidden">
+            <div class="modal-card" style="max-width:560px;width:100%;">
+                <div class="modal-header">
+                    <div class="modal-title">💾 My Saved Trips</div>
+                    <button class="modal-close" id="mytrips-close">✕</button>
+                </div>
+                <div id="mytrips-list" style="max-height:420px;overflow-y:auto;"></div>
+                <div style="text-align:center;margin-top:12px;">
+                    <button class="btn btn-ghost btn-sm" id="mytrips-clear">🗑️ Clear All</button>
+                </div>
+            </div>
+        </div>
 
-        <!-- ══════════════════════════════════════════════════════════════════
-     SCREEN 1 — INPUT
-     ══════════════════════════════════════════════════════════════════ -->
+        <!-- ══════════════════════════════════════════════════════
+             SCREEN 1 — INPUT
+             ══════════════════════════════════════════════════════ -->
         <div id="screen-input" class="screen">
             <!-- Hero -->
             <section class="hero-section">
@@ -120,14 +133,15 @@
             <div class="container">
                 <div class="glass-card input-card">
 
-                    <!-- Location input -->
+                    <!-- Location input with autocomplete -->
                     <div class="modal-field">
                         <label class="input-label" for="location-input">📍 Destinations</label>
-                        <div class="chip-input-wrap">
+                        <div class="chip-input-wrap" style="position:relative;">
                             <input class="input-field" type="text" id="location-input"
-                                placeholder="Type a city, e.g. Delhi… then press Enter" autocomplete="off">
+                                placeholder="Type a city, e.g. Delhi…" autocomplete="off">
                             <button class="btn btn-secondary btn-sm" id="add-location-btn" style="white-space:nowrap;">+
                                 Add</button>
+                            <ul id="location-suggestions" class="location-suggestions hidden"></ul>
                         </div>
                         <div class="chip-box" id="chip-box"></div>
                     </div>
@@ -141,6 +155,24 @@
                         <div class="modal-field" style="margin-bottom:0">
                             <label class="input-label" for="end-date">🗓️ End Date</label>
                             <input class="input-field" type="date" id="end-date">
+                        </div>
+                    </div>
+
+                    <!-- Custom Places (optional pre-seed) -->
+                    <div class="home-custom-places-wrap" id="home-custom-places-wrap">
+                        <button class="home-custom-toggle" id="home-custom-toggle" type="button" aria-expanded="false">
+                            <span>🎯 I already know where I want to go</span>
+                            <span class="custom-toggle-chevron">▾</span>
+                        </button>
+                        <div class="home-custom-body hidden" id="home-custom-body">
+                            <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+                                Paste place names (one per line or comma-separated) — they'll be auto-selected in the
+                                next
+                                step.
+                            </p>
+                            <textarea id="home-custom-places" class="input-field"
+                                style="min-height:90px;resize:vertical;font-size:13px;"
+                                placeholder="Red Fort&#10;Qutub Minar&#10;India Gate, Humayun's Tomb"></textarea>
                         </div>
                     </div>
 
@@ -158,15 +190,17 @@
                     <div class="feature-pill">📸 Place Images</div>
                     <div class="feature-pill">🚇 Commute Info</div>
                     <div class="feature-pill">📍 Interactive Map</div>
-                    <div class="feature-pill">📥 Download Itinerary</div>
+                    <div class="feature-pill">📥 Download PDF</div>
                     <div class="feature-pill">🤖 AI Auto Mode</div>
+                    <div class="feature-pill">💾 Save Trips</div>
+                    <div class="feature-pill">🔗 Share Trip</div>
                 </div>
             </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════════════════
-     SCREEN 2 — PLACE DISCOVERY
-     ══════════════════════════════════════════════════════════════════ -->
+        <!-- ══════════════════════════════════════════════════════
+             SCREEN 2 — PLACE DISCOVERY
+             ══════════════════════════════════════════════════════ -->
         <div id="screen-discovery" class="screen">
             <div class="container">
 
@@ -190,7 +224,20 @@
                     </div>
                 </div>
 
-                <!-- Selection status bar -->
+                <!-- Search Nearby -->
+                <div class="nearby-search-wrap glass-card" style="padding:20px;margin-bottom:20px;">
+                    <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-secondary);">🔍 Add a
+                        Specific Place or Area</div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <input class="input-field" type="text" id="nearby-input"
+                            placeholder="e.g. India Gate, Red Fort, Connaught Place…" style="flex:1;">
+                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn"
+                            style="white-space:nowrap;">Search</button>
+                    </div>
+                    <div id="nearby-results" class="place-card-grid" style="margin-top:12px;"></div>
+                </div>
+
+                <!-- Selection count -->
                 <div class="selection-bar">
                     <span id="selection-count">0 places selected</span>
                     <span style="font-size:12px;color:var(--text-muted);">Click cards to select · Enable Auto to let AI
@@ -211,9 +258,9 @@
             </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════════════════
-     SCREEN 3 — ITINERARY
-     ══════════════════════════════════════════════════════════════════ -->
+        <!-- ══════════════════════════════════════════════════════
+             SCREEN 3 — ITINERARY
+             ══════════════════════════════════════════════════════ -->
         <div id="screen-itinerary" class="screen">
             <div class="container">
 
@@ -224,14 +271,17 @@
                         <div class="itin-summary-text" id="itin-summary">Loading…</div>
                         <div class="ai-provider-tag" id="ai-provider-tag"
                             style="display:none;margin-top:6px;font-size:12px;"></div>
+                        <div class="budget-badge" id="budget-badge" style="display:none;margin-top:6px;"></div>
                     </div>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;">
                         <button class="btn btn-ghost btn-sm" id="back-to-discovery">← Edit Places</button>
                         <button class="btn btn-secondary btn-sm" id="new-trip-btn">🔄 New Trip</button>
+                        <button class="btn btn-secondary btn-sm" id="save-trip-btn">💾 Save</button>
+                        <button class="btn btn-ghost btn-sm" id="share-trip-btn">🔗 Share</button>
                     </div>
                 </div>
 
-                <!-- Two-column layout: accordion + map -->
+                <!-- Two-column layout -->
                 <div class="itinerary-layout">
 
                     <!-- Left: Accordion -->
@@ -256,31 +306,20 @@
                     <div class="map-panel">
                         <div class="map-container" id="map-container"></div>
                         <div class="day-legend" id="day-legend"></div>
+                        <div style="margin-top:8px;">
+                            <button class="btn btn-ghost btn-sm" id="map-reset-focus">↺ Show All Days</button>
+                        </div>
                     </div>
 
                 </div>
             </div>
         </div>
 
-        <!-- ════════════════════════ SCRIPTS ════════════════════════════════ -->
-        <!-- Leaflet JS (OpenStreetMap) -->
+        <!-- Scripts -->
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
             integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
         <script type="module" src="js/app.js"></script>
-        <script>
-  // Close settings modal on overlay click
-  document.getElementById('settings-modal').addEventListener('click', function(e) {
-    if (e.target === this) this.classList.add('hidden');
-  });
-
-  // Extra cancel button in modal
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('close-settings-x')?.addEventListener('click', () => {
-      document.getElementById('settings-modal').classList.add('hidden');
-    });
-  });
-        </script>
 
     </body>
 

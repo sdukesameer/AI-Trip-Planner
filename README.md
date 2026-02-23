@@ -1,88 +1,311 @@
-# ✈️ AI Trip Planner
+# AI Trip Planner 🗺️✈️
 
-An AI-powered travel itinerary planner that creates personalized day-by-day trip plans with interactive maps, place images, commute info, and downloadable itineraries.
+> An AI-powered travel itinerary generator with interactive maps, real-time place discovery, PDF export, and trip sharing — built with Vanilla JS, Leaflet, and Google Gemini / Groq AI.
 
-![AI Trip Planner](https://source.unsplash.com/1200x400/?travel,adventure)
+[![Netlify Status](https://api.netlify.com/api/v1/badges/YOUR-BADGE-ID/deploy-status)](https://app.netlify.com/sites/YOUR-SITE/deploys)
 
-## ✨ Features
+---
 
-- 🤖 **Smart AI Planning** — Uses Gemini AI (with Groq fallback) to generate intelligent itineraries
-- 🗺️ **Interactive Map** — OpenStreetMap with day-color-coded markers and route lines
-- 📸 **Place Images** — Beautiful thumbnails for every tourist attraction
-- 🚇 **Commute Info** — Walking time, cab fare, and metro routes between places
-- 📅 **Multi-Day Support** — Handles trips of any length (chunked generation for 7+ days)
-- 📍 **Geo-Grouping** — Smart grouping of nearby places on the same day
-- 📥 **Download** — Export as PDF, text, or copy to clipboard
-- 🔄 **AI Fallback** — Automatic failover: Gemini Flash → Flash-Lite → 1.5 Flash → Groq
+## 📑 Table of Contents
 
-## 🚀 Quick Start
+- [Overview](#overview)
+- [Live Demo](#live-demo)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Data Schemas](#data-schemas)
+- [API Integrations](#api-integrations)
+- [Environment Variables](#environment-variables)
+- [Local Development](#local-development)
+- [Deploying to Netlify](#deploying-to-netlify)
+- [Architecture Notes](#architecture-notes)
+- [Contributing](#contributing)
 
-### Local Development
+---
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/ai-trip-planner.git
-   cd ai-trip-planner
-   ```
+## Overview
 
-2. Start a local server:
-   ```bash
-   python3 -m http.server 8080
-   ```
+AI Trip Planner generates a full day-by-day travel itinerary for any set of Indian (or international) destinations using large language models. It clusters nearby attractions geographically, schedules them in realistic time blocks (10 AM → 6 PM), estimates entry fees, and renders everything on an interactive map.
 
-3. Open `http://localhost:8080` in your browser
+Users can:
+- Input destinations + travel dates
+- Pre-specify custom places they want to visit (from the home screen)
+- Browse and select from AI-discovered famous places
+- Search for more attractions near a specific area
+- Generate a structured, time-slotted itinerary
+- Download the itinerary as a rich PDF (with place thumbnails) or emoji-rich plain text
+- Save trips locally + share via URL
 
-4. Click **⚙️ Settings** and add your API keys:
-   - **Gemini API Key** — Get free at [aistudio.google.com](https://aistudio.google.com)
-   - **Groq API Key** (optional) — Get free at [console.groq.com](https://console.groq.com)
+---
 
-### Deploy to Netlify
+## Live Demo
 
-1. Push this repo to GitHub
+> _Add your Netlify URL here once deployed_
 
-2. Connect the repo to [Netlify](https://app.netlify.com)
+---
 
-3. Set environment variables in Netlify (Site settings → Environment variables):
-   | Variable | Description |
-   |----------|-------------|
-   | `GEMINI_API_KEY` | Your Google Gemini API key |
-   | `GROQ_API_KEY` | Your Groq API key (fallback) |
+## Features
 
-4. Deploy! The build script (`build-env.js`) automatically injects the keys.
+| Feature | Description |
+|---|---|
+| 🤖 Multi-provider AI | Gemini 2.0 Flash → Gemini 2.0 Flash-Lite → Groq Llama → Groq Mixtral (auto-fallback) |
+| 🗺️ Interactive Map | Leaflet + OpenStreetMap: pin-drop markers, day-focus, polyline routes, popups with images |
+| 📅 Realistic Scheduling | Day starts 10 AM, places ordered by `arrivalTime` with actual visit durations |
+| 📍 Geographic Clustering | AI groups places within ~5 km radius on the same day |
+| 🔍 Place Discovery | Photon-geocoded "Search Nearby" with AI-powered results |
+| 📸 Place Images | Unsplash API (context-aware: name + city query) with Picsum fallback |
+| 💾 Save & Share | localStorage save (up to 5 trips) + URL hash sharing |
+| 📄 Rich PDF Export | jsPDF: place thumbnails, colored day banners, commute info, entry fee breakdown |
+| 📋 Emoji Copy Text | WhatsApp-friendly itinerary with flag emojis, time slots, → arrows |
+| 💰 Budget Estimator | Per-day entry fee tally (tickets only, travel excluded) |
+| 🌙 Dark/Light Theme | Persisted in localStorage; Leaflet tiles switch automatically |
+| 📱 Mobile Responsive | Full 480px breakpoint with stacked layouts |
+| ⚡ Session Caching | AI responses + images cached in `sessionStorage`; debounced requests |
 
-## 🏗️ Architecture
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Core | Vanilla HTML5, JavaScript ES Modules |
+| Styling | Vanilla CSS (CSS custom properties, no build step) |
+| Maps | [Leaflet.js](https://leafletjs.com/) 1.9 + CartoDB tiles |
+| AI (primary) | [Google Gemini API](https://ai.google.dev/) — `gemini-2.0-flash` |
+| AI (fallback) | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| Images | [Unsplash API](https://unsplash.com/developers) |
+| Geocoding | [Photon API](https://photon.komoot.io/) (OpenStreetMap-backed, no key required) |
+| PDF | [jsPDF](https://github.com/parallax/jsPDF) 2.5 (CDN) |
+| Deployment | [Netlify](https://netlify.com/) (static hosting + env injection via build script) |
+
+---
+
+## Project Structure
 
 ```
-ai-trip-planner/
-├── index.html          ← Main SPA shell (all 3 screens)
+AI-Trip-Planner-main/
+├── index.html              # Single-page app shell (all screens)
+├── build-env.js            # Netlify build script: injects API keys → js/env.js
+├── package.json            # Build script + dev server config
+│
 ├── css/
-│   ├── style.css       ← Global design tokens, layout, animations
-│   └── components.css  ← Card, accordion, map, discovery styles
-├── js/
-│   ├── app.js          ← Screen router, state manager
-│   ├── api.js          ← AI provider abstraction + fallback chain
-│   ├── maps.js         ← Leaflet/OpenStreetMap integration
-│   └── download.js     ← PDF / text export
-├── build-env.js        ← Netlify build script (injects API keys)
-├── netlify.toml        ← Netlify deployment config
-└── .gitignore
+│   ├── style.css           # Global tokens, resets, typography, theme variables
+│   └── components.css      # All component-level styles (accordion, map, modals…)
+│
+└── js/
+    ├── env.js              # API keys (git-ignored; generated by build-env.js)
+    ├── app.js              # ★ Main orchestrator: state, screen routing, UI logic
+    ├── api.js              # AI provider abstraction: Gemini + Groq calls, JSON repair
+    ├── maps.js             # Leaflet integration: markers, popups, focus, polylines
+    └── download.js         # Export: emoji copy text, rich PDF with thumbnails
 ```
 
-## 🤖 AI Fallback Chain
+### Screen Flow
 
-The app tries AI providers in this order:
+```
+screen-input  ──[Plan My Trip]──►  screen-progress
+                                        │
+                                        ▼
+screen-itinerary  ◄──[Generate Itinerary]──  screen-discovery
+        │                                          │
+        │                                    [Search Nearby]
+        │                                    [Load More]
+        ▼
+  [Download PDF / TXT / Copy / Save / Share]
+```
 
-1. **Gemini 2.0 Flash** — Fastest, default
-2. **Gemini 2.0 Flash-Lite** — Lighter, still fast
-3. **Gemini 1.5 Flash** — Older but reliable
-4. **Groq (Llama 3.3 70B)** — Fallback if all Gemini models fail
+---
 
-Each attempt has a **45-second timeout**. If one fails, the next is tried automatically with a toast notification.
+## Data Schemas
 
-## 🗺️ Map
+### `Place`
+```typescript
+interface Place {
+  name:          string;           // Display name
+  location:      string;           // City/area (e.g. "New Delhi")
+  shortDesc?:    string;           // 1-line teaser
+  desc?:         string;           // 2–3 sentence full description
+  category?:     'Heritage' | 'Nature' | 'Religious' | 'Market' | 'Museum' | 'Entertainment' | 'Food';
+  openingHours?: string;           // e.g. "9:00 AM – 6:00 PM"
+  entryFee?:     string;           // e.g. "₹40" or "Free"
+  arrivalTime?:  string;           // e.g. "10:00 AM" (computed by AI per-day schedule)
+  visitDuration?: string;          // e.g. "2 hrs"
+  bestTime?:     string;           // e.g. "Early morning before crowds"
+  closedNote?:   string;           // e.g. "Closed Mondays"
+  lat?:          number;           // WGS84 decimal latitude
+  lng?:          number;           // WGS84 decimal longitude
+  commute_from_prev?: Commute;     // Transit info from previous day's place
+}
+```
 
-Uses **Leaflet.js** with **OpenStreetMap** tiles (CartoDB dark theme) — completely free, no API key required.
+### `Commute`
+```typescript
+interface Commute {
+  walk:  string;   // e.g. "12 min (900m)" | "N/A"
+  cab:   string;   // e.g. "₹80–120" | "N/A"
+  metro: string;   // e.g. "Yellow Line → Rajiv Chowk (₹30)" | "N/A"
+}
+```
 
-## 📄 License
+### `Day`
+```typescript
+interface Day {
+  day:      number;    // Day number (1-indexed)
+  date:     string;    // ISO date "YYYY-MM-DD"
+  theme:    string;    // Creative day title e.g. "Mughal Grandeur & Old Delhi"
+  location: string;    // Primary city/area for this day
+  places:   Place[];
+}
+```
 
-MIT
+### `Itinerary`
+```typescript
+interface Itinerary {
+  summary: string;   // 1–2 line trip overview
+  days:    Day[];
+}
+```
+
+### `AppState` (runtime)
+```typescript
+interface AppState {
+  locations:     string[];    // Selected destination cities
+  startDate:     string;      // ISO date
+  endDate:       string;      // ISO date
+  places:        Place[];     // All discovered places
+  imageCache:    Record<string, string>;   // name → Unsplash URL
+  autoMode:      boolean;     // AI picks places vs. user selection
+  selectedPlaces: Place[];
+  itinerary:     Itinerary | null;
+  aiProvider:    string;      // Last AI that responded
+  config:        { geminiKey: string; groqKey: string; unsplashKey: string };
+}
+```
+
+---
+
+## API Integrations
+
+### Google Gemini
+- **Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+- **Models (priority order):** `gemini-2.0-flash` → `gemini-2.0-flash-lite`
+- **Used for:** Famous place discovery, itinerary generation, nearby search
+- **Rate limits:** Free tier ~15 RPM / 1M TPD; handled via multi-provider fallback
+
+### Groq
+- **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
+- **Models:** `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`
+- **Used for:** Fallback when Gemini quota is exhausted
+- **Rate limits:** Free tier generous; recommended primary for local testing
+
+### Unsplash
+- **Endpoint:** `https://api.unsplash.com/search/photos`
+- **Query strategy:** `"{place name} {city} landmark"` for location-specific results
+- **Fallback:** `https://picsum.photos/seed/{hash}/400/300` (no key required)
+
+### Photon (OpenStreetMap Geocoding)
+- **Endpoint:** `https://photon.komoot.io/api/?q={query}&limit=6&lang=en`
+- **Used for:** Location autocomplete on the input screen
+- **Key required:** None ✅ CORS-free ✅
+
+---
+
+## Environment Variables
+
+Set these in the **Netlify dashboard** under `Site Settings → Environment Variables`:
+
+| Variable | Description | Required |
+|---|---|---|
+| `GEMINI_API_KEY` | Google AI Studio API key | Recommended |
+| `GROQ_API_KEY` | Groq Cloud API key | Recommended |
+| `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | Optional (Picsum fallback) |
+
+> **Security:** Keys are injected at build time by `build-env.js` into `js/env.js`, which is `.gitignore`d. Keys are **never** committed or exposed in the repository.
+
+### Getting API Keys
+
+| Provider | URL | Free Tier |
+|---|---|---|
+| Gemini | https://aistudio.google.com/apikey | ✅ Yes |
+| Groq | https://console.groq.com/keys | ✅ Yes |
+| Unsplash | https://unsplash.com/developers | ✅ 50 req/hr |
+
+---
+
+## Local Development
+
+```bash
+# 1. Clone
+git clone https://github.com/sdukesameer/AI-Trip-Planner.git
+cd AI-Trip-Planner
+
+# 2. Install deps (only needed for the dev server)
+npm install
+
+# 3. Set up your local API keys
+cp js/env.example.js js/env.js
+# Edit js/env.js and paste your API keys
+
+# 4. Start dev server (serves on http://localhost:3000)
+npm run dev
+```
+
+> **No build step required.** The app uses native ES modules — no bundler, no transpilation.
+
+---
+
+## Deploying to Netlify
+
+1. Push your repository to GitHub
+2. Connect the repo to [Netlify](https://app.netlify.com/)
+3. Set **Build command:** `node build-env.js`
+4. Set **Publish directory:** `.` (root)
+5. Add environment variables in `Site Settings → Environment Variables`
+6. Deploy 🎉
+
+`build-env.js` reads the Netlify environment variables and writes `js/env.js` before the site is published. The generated file is excluded via `.gitignore`.
+
+---
+
+## Architecture Notes
+
+### Multi-Provider AI Fallback
+`api.js` exports `smartAICall()` which tries providers in sequence. Each provider's response is run through `extractJSON()` which applies a 3-stage repair pipeline:
+1. Strip markdown fences (` ```json ... ``` `)
+2. Remove trailing commas (common LLM mistake)
+3. Truncate to the last complete JSON object if response is cut off
+
+### Session Caching
+All AI responses are cached in `sessionStorage` using a composite key of `(type, locations, dates, selectedPlaces)`. This prevents re-querying when the user navigates between screens within the same browser session.
+
+### Geographic Clustering in the AI Prompt
+The itinerary prompt includes concrete examples of clusters (e.g., India Gate + Rajpath + War Memorial → same day) and pass known `lat/lng` coordinates of selected places as hints. The AI is instructed to calculate `arrivalTime` cumulatively: Place N + visitDuration + transit → Place N+1.
+
+### Map Safety
+`clearMarkers()` in `maps.js` wraps every `map.removeLayer()` call in a `try/catch`. The map is fully torn down (`map.off(); map.remove()`) before re-initialization on screen navigation, preventing `_leaflet_id` null errors on saved-trip load.
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Make changes following the existing code style (vanilla JS, no build tools)
+4. Test locally with `npm run dev`
+5. Open a PR with a clear description of what you changed and why
+
+### Code Style
+- Vanilla JS ES Modules (no TypeScript, no bundler)
+- CSS custom properties for all colors/spacing (see `style.css` `:root`)
+- Keep `app.js` as the orchestrator; logic belongs in `api.js`, `maps.js`, or `download.js`
+- Always use `showToast()` for user feedback — never `alert()`
+
+---
+
+## License
+
+MIT License — free to use, modify, and distribute.
+
+---
+
+*Generated itineraries are for planning purposes only. Check official sources for current opening hours, entry fees, and closures before visiting.*

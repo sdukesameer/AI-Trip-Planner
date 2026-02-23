@@ -3,104 +3,128 @@
 // ============================================================
 
 let map = null;
-let markers = [];
-let polylines = [];
+let markersGrid = [];    // markersGrid[dayIdx][placeIdx] = L.marker
+let polylinesByDay = []; // polylinesByDay[dayIdx] = L.polyline
+let tileLayer = null;
+let currentTheme = 'dark';
+let _imageCache = {};
 
 const DAY_COLORS = [
-    '#3B82F6', // Day 1 — Blue
-    '#10B981', // Day 2 — Green
-    '#F59E0B', // Day 3 — Amber
-    '#EF4444', // Day 4 — Red
-    '#8B5CF6', // Day 5 — Purple
-    '#EC4899', // Day 6 — Pink
-    '#06B6D4', // Day 7 — Cyan
-    '#F97316', // Day 8 — Orange
-    '#84CC16', // Day 9 — Lime
-    '#6366F1', // Day 10 — Indigo
+    '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
+    '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1',
 ];
 
-export function getDayColor(dayIndex) {
-    return DAY_COLORS[dayIndex % DAY_COLORS.length];
-}
+const TILES = {
+    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+};
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>';
 
-/**
- * Initialise the Leaflet map in the given container.
- * Uses CartoDB dark tiles to match the app's dark theme.
- */
-export function initMap(containerId) {
+export function getDayColor(dayIndex) { return DAY_COLORS[dayIndex % DAY_COLORS.length]; }
+
+// ── Init map ─────────────────────────────────────────────────
+export function initMap(containerId, theme = 'dark') {
+    currentTheme = theme;
     const container = document.getElementById(containerId);
     if (!container) return Promise.reject(new Error('Map container not found'));
 
-    // If map already exists, remove it first
+    // Fully destroy previous map instance if it exists
     if (map) {
-        map.remove();
+        try { map.off(); map.remove(); } catch { /* ignore */ }
         map = null;
     }
-
-    // Clear the container's inner HTML to avoid Leaflet re-init errors
+    // Clear stale marker/polyline refs so clearMarkers() doesn't try to remove from old map
+    markersGrid = [];
+    polylinesByDay = [];
     container.innerHTML = '';
 
     return new Promise((resolve) => {
-        map = L.map(containerId, {
-            zoomControl: true,
-            attributionControl: true,
-        }).setView([20.5937, 78.9629], 5); // Default: center of India
+        map = L.map(containerId, { zoomControl: true, attributionControl: true })
+            .setView([20.5937, 78.9629], 5);
 
-        // Dark-themed CartoDB tiles (free, no API key)
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 19,
+        tileLayer = L.tileLayer(TILES[currentTheme], {
+            attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19,
         }).addTo(map);
 
-        // Force Leaflet to recalculate size after container becomes visible
-        setTimeout(() => {
-            map.invalidateSize();
-            resolve(map);
-        }, 300);
+        setTimeout(() => { try { map.invalidateSize(); } catch { /* ignore */ } resolve(map); }, 300);
     });
 }
 
+// ── Switch map tiles for theme ────────────────────────────────
+export function setMapTheme(theme) {
+    currentTheme = theme;
+    if (!map || !tileLayer) return;
+    try {
+        map.removeLayer(tileLayer);
+        tileLayer = L.tileLayer(TILES[theme], {
+            attribution: TILE_ATTR, subdomains: 'abcd', maxZoom: 19,
+        }).addTo(map);
+    } catch { /* ignore if map torn down */ }
+}
+
+// ── Clear all markers/polylines (null-safe) ───────────────────
 export function clearMarkers() {
-    markers.forEach(m => map && map.removeLayer(m));
-    polylines.forEach(p => map && map.removeLayer(p));
-    markers = [];
-    polylines = [];
+    markersGrid.forEach(dayMarkers => {
+        dayMarkers.forEach(m => {
+            if (!m || !map) return;
+            try { map.removeLayer(m); } catch { /* marker already removed or map gone */ }
+        });
+    });
+    polylinesByDay.forEach(p => {
+        if (!p || !map) return;
+        try { map.removeLayer(p); } catch { /* ignore */ }
+    });
+    markersGrid = [];
+    polylinesByDay = [];
 }
 
-/**
- * Create a numbered circle marker icon for Leaflet.
- */
-function createNumberedIcon(number, color) {
+// ── Pin-drop icon ─────────────────────────────────────────────
+function createPinIcon(number, color) {
     return L.divIcon({
-        className: 'leaflet-numbered-icon',
-        html: `<div style="
-      background: ${color};
-      color: #fff;
-      width: 30px;
-      height: 30px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 12px;
-      font-family: 'Inter', sans-serif;
-      border: 2.5px solid #fff;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-    ">${number}</div>`,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
-        popupAnchor: [0, -18],
+        className: 'leaflet-pin-icon',
+        html: `<div class="pin-body" style="background:${color};box-shadow:0 4px 14px ${color}66;">
+                 <span class="pin-num">${number}</span>
+               </div>
+               <div class="pin-tip" style="border-top-color:${color};"></div>`,
+        iconSize: [32, 44],
+        iconAnchor: [16, 44],
+        popupAnchor: [0, -46],
     });
 }
 
-/**
- * Plot all itinerary days on the map with colour-coded markers & route lines.
- * @param {Object} itinerary - The itinerary object with `days` array.
- * @param {Function} onMarkerClick - Callback(dayIdx, placeIdx) when a marker is clicked.
- */
-export function plotItinerary(itinerary, onMarkerClick) {
+// ── Build rich popup HTML ─────────────────────────────────────
+function buildPopup(place, day, color, locations = []) {
+    const img = _imageCache[place.name] || '';
+    const imgHtml = img
+        ? `<img src="${img}" style="width:100%;height:110px;object-fit:cover;border-radius:8px 8px 0 0;display:block;">`
+        : '';
+    // Use text-based query (name + city) — far more useful than raw coordinates
+    const city = place.location || locations[0] || '';
+    const gmapQ = encodeURIComponent([place.name, city].filter(Boolean).join(' '));
+    const gmapUrl = `https://www.google.com/maps/search/?api=1&query=${gmapQ}`;
+    const gmapBtn = `<a href="${gmapUrl}" target="_blank" rel="noopener"
+        style="display:inline-block;margin-top:8px;padding:4px 12px;background:${color};color:#fff;border-radius:999px;font-size:11px;text-decoration:none;font-weight:600;">
+        🗺️ Google Maps</a>`;
+
+    const arrTime = place.arrivalTime ? `<span style="font-size:11px;font-weight:700;color:${color};">${place.arrivalTime}</span>  ` : '';
+    const dur = place.visitDuration ? `<span style="font-size:10px;color:#888;">⌛ ${place.visitDuration}</span>` : '';
+
+    return `<div style="font-family:Inter,sans-serif;min-width:200px;max-width:250px;">
+      ${imgHtml}
+      <div style="padding:10px 12px 10px;">
+        <div style="font-weight:800;font-size:13px;margin-bottom:3px;">${arrTime}${place.name}</div>
+        <div style="font-size:11px;color:#888;margin-bottom:4px;">Day ${day.day} · ${day.theme || ''} ${dur}</div>
+        ${place.openingHours ? `<div style="font-size:11px;color:#aaa;">⏰ ${place.openingHours}</div>` : ''}
+        ${place.entryFee ? `<div style="font-size:11px;color:#aaa;">💰 ${place.entryFee}</div>` : ''}
+        ${place.closedNote ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px;">⚠️ ${place.closedNote}</div>` : ''}
+        ${gmapBtn}
+      </div>
+    </div>`;
+}
+
+// ── Plot full itinerary ───────────────────────────────────────
+export function plotItinerary(itinerary, imageCache, onMarkerClick, locations = []) {
+    _imageCache = imageCache || {};
     clearMarkers();
     if (!map) return;
 
@@ -108,55 +132,108 @@ export function plotItinerary(itinerary, onMarkerClick) {
 
     itinerary.days.forEach((day, dayIdx) => {
         const color = getDayColor(dayIdx);
+        const dayMarkers = [];
         const dayCoords = [];
 
         day.places.forEach((place, placeIdx) => {
             if (!place.lat || !place.lng) return;
-
             const latlng = [place.lat, place.lng];
             allLatLngs.push(latlng);
             dayCoords.push(latlng);
 
-            const marker = L.marker(latlng, {
-                icon: createNumberedIcon(placeIdx + 1, color),
-                zIndexOffset: 100,
-            }).addTo(map);
+            let marker;
+            try {
+                marker = L.marker(latlng, {
+                    icon: createPinIcon(placeIdx + 1, color),
+                    zIndexOffset: 100 + placeIdx,
+                }).addTo(map);
 
-            // Popup content
-            const popupContent = `
-        <div style="font-family:Inter,sans-serif;max-width:220px;">
-          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${place.name}</div>
-          <div style="font-size:12px;color:#6B7280;margin-bottom:6px;">Day ${day.day} · ${day.theme || ''}</div>
-          <div style="font-size:12px;color:#374151;">${place.desc?.slice(0, 100) || ''}${(place.desc?.length || 0) > 100 ? '...' : ''}</div>
-        </div>
-      `;
-            marker.bindPopup(popupContent, {
-                className: 'dark-popup',
-                maxWidth: 250,
-            });
+                marker.bindPopup(buildPopup(place, day, color, locations), {
+                    className: 'dark-popup',
+                    maxWidth: 270,
+                    minWidth: 200,
+                });
 
-            marker.on('click', () => {
-                if (onMarkerClick) onMarkerClick(dayIdx, placeIdx);
-            });
-
-            markers.push(marker);
+                marker.on('click', () => { if (onMarkerClick) onMarkerClick(dayIdx, placeIdx); });
+                dayMarkers.push(marker);
+            } catch (err) {
+                console.warn('[maps] Failed to add marker for', place.name, err.message);
+            }
         });
 
-        // Draw route line connecting places of the same day
+        markersGrid.push(dayMarkers);
+
+        let polyline = null;
         if (dayCoords.length > 1) {
-            const polyline = L.polyline(dayCoords, {
-                color: color,
-                weight: 3,
-                opacity: 0.6,
-                dashArray: '8, 6',
-            }).addTo(map);
-            polylines.push(polyline);
+            try {
+                polyline = L.polyline(dayCoords, {
+                    color, weight: 3, opacity: 0.65, dashArray: '8, 6',
+                }).addTo(map);
+            } catch { /* ignore */ }
         }
+        polylinesByDay.push(polyline);
     });
 
-    // Fit map to all markers
     if (allLatLngs.length > 0) {
-        const bounds = L.latLngBounds(allLatLngs);
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+        try {
+            map.fitBounds(L.latLngBounds(allLatLngs), { padding: [40, 40], maxZoom: 15 });
+        } catch { /* ignore */ }
+    }
+}
+
+// ── Focus a single day (dim others) ──────────────────────────
+export function focusDay(dayIdx) {
+    markersGrid.forEach((dayMarkers, dIdx) => {
+        dayMarkers.forEach(marker => {
+            try {
+                const el = marker.getElement();
+                if (!el) return;
+                el.style.opacity = dIdx === dayIdx ? '1' : '0.2';
+                el.style.transform = el.style.transform.replace(/scale\([^)]+\)/g, '');
+                if (dIdx !== dayIdx) el.style.transform += ' scale(0.8)';
+            } catch { /* ignore */ }
+        });
+    });
+    polylinesByDay.forEach((pl, dIdx) => {
+        if (pl) { try { pl.setStyle({ opacity: dIdx === dayIdx ? 0.7 : 0.1 }); } catch { /* ignore */ } }
+    });
+
+    const dayMarkers = markersGrid[dayIdx] || [];
+    if (dayMarkers.length > 0) {
+        try {
+            const bounds = L.latLngBounds(dayMarkers.map(m => m.getLatLng()));
+            map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
+        } catch { /* ignore */ }
+    }
+}
+
+// ── Reset all focus ───────────────────────────────────────────
+export function resetFocus() {
+    markersGrid.forEach(dayMarkers => {
+        dayMarkers.forEach(marker => {
+            try {
+                const el = marker.getElement();
+                if (el) { el.style.opacity = '1'; el.style.transform = ''; }
+            } catch { /* ignore */ }
+        });
+    });
+    polylinesByDay.forEach(pl => {
+        if (pl) { try { pl.setStyle({ opacity: 0.65 }); } catch { /* ignore */ } }
+    });
+    // Reset to full bounds
+    const all = markersGrid.flatMap(d => d.map(m => { try { return m.getLatLng(); } catch { return null; } }).filter(Boolean));
+    if (all.length > 0 && map) {
+        try { map.fitBounds(L.latLngBounds(all), { padding: [40, 40], maxZoom: 15 }); } catch { /* ignore */ }
+    }
+}
+
+// ── Focus a specific place marker ────────────────────────────
+export function focusPlace(dayIdx, placeIdx) {
+    const marker = markersGrid[dayIdx]?.[placeIdx];
+    if (marker && map) {
+        try {
+            map.panTo(marker.getLatLng(), { animate: true, duration: 0.5 });
+            setTimeout(() => { try { marker.openPopup(); } catch { /* ignore */ } }, 400);
+        } catch { /* ignore */ }
     }
 }

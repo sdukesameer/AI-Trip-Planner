@@ -1,69 +1,71 @@
 // ============================================================
-//  app.js — State manager & screen router
+//  app.js — State manager & screen router  (v2)
 // ============================================================
 
-import { fetchFamousPlaces, fetchPlaceImages, generateItinerary, getLastProvider } from './api.js';
-import { initMap, plotItinerary, getDayColor } from './maps.js';
+import {
+    fetchFamousPlaces, fetchMorePlaces, searchNearbyPlaces,
+    fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback
+} from './api.js';
+import { initMap, plotItinerary, focusDay, focusPlace, resetFocus, setMapTheme } from './maps.js';
 import { downloadAsText, downloadAsPDF, copyToClipboard } from './download.js';
 
-// ── Try to load env keys (injected by Netlify build) ──────────
+// ── ENV keys (injected at Netlify build time) ─────────────────
 let ENV_KEYS = {};
-
 async function loadEnvKeys() {
     try {
-        const envModule = await import('./env.js');
-        if (envModule?.ENV_KEYS) ENV_KEYS = envModule.ENV_KEYS;
-    } catch {
-        // env.js doesn't exist locally — that's fine
-    }
+        const m = await import('./env.js');
+        if (m?.ENV_KEYS) ENV_KEYS = m.ENV_KEYS;
+    } catch { /* local dev without env.js */ }
 }
+
+// ── Session cache (survives JS navigation, clears on tab close) ─
+const _memCache = new Map();
+function cacheGet(key) {
+    if (_memCache.has(key)) return _memCache.get(key);
+    try {
+        const raw = sessionStorage.getItem('atp_' + key);
+        if (raw) { const v = JSON.parse(raw); _memCache.set(key, v); return v; }
+    } catch { /* ignore */ }
+    return null;
+}
+function cacheSet(key, val) {
+    _memCache.set(key, val);
+    try { sessionStorage.setItem('atp_' + key, JSON.stringify(val)); } catch { /* storage full */ }
+}
+function cacheKey(...parts) { return parts.join('|'); }
 
 // ── Global State ─────────────────────────────────────────────
 const state = {
     locations: [],
     startDate: '',
     endDate: '',
-    places: [],         // raw array from API
-    imageCache: {},     // { "place name": "url" }
+    places: [],
+    imageCache: {},
     autoMode: false,
-    selectedPlaces: [], // array of place objects
+    selectedPlaces: [],
     itinerary: null,
-    aiProvider: '',     // which AI model generated the itinerary
-    config: {
-        geminiKey: '',
-        groqKey: '',
-    }
+    aiProvider: '',
+    config: { geminiKey: '', groqKey: '', unsplashKey: '' },
 };
 
 // ── Screen management ─────────────────────────────────────────
 function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    const el = document.getElementById(id);
-    if (el) el.classList.add('active');
+    document.getElementById(id)?.classList.add('active');
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ── Progress bar ──────────────────────────────────────────────
-const STAGES = [
-    'Fetching famous places…',
-    'Loading place images…',
-    'Building smart itinerary…',
-    'Rendering map & results…'
-];
+// ── Progress ──────────────────────────────────────────────────
+const STAGES = ['Fetching famous places…', 'Loading place images…', 'Building smart itinerary…', 'Rendering map & results…'];
 
-function showProgress() {
-    document.getElementById('progress-overlay').classList.remove('hidden');
-    setProgress(0, STAGES[0]);
-}
+function showProgress() { document.getElementById('progress-overlay').classList.remove('hidden'); setProgress(0, STAGES[0]); }
 
 function setProgress(step, label) {
-    const pct = Math.round(((step) / STAGES.length) * 100);
+    const pct = Math.round((step / STAGES.length) * 100);
     document.getElementById('progress-bar-fill').style.width = pct + '%';
     document.getElementById('progress-pct').textContent = pct + '%';
     document.getElementById('progress-label').textContent = label;
     document.getElementById('progress-step').textContent = `Step ${step + 1} of ${STAGES.length}`;
-
-    // Update stage dots
     document.querySelectorAll('.stage-dot').forEach((dot, idx) => {
         dot.classList.toggle('done', idx < step);
         dot.classList.toggle('active', idx === step);
@@ -79,157 +81,240 @@ function hideProgress() {
     if (badge) badge.style.display = 'none';
 }
 
-function showAIModelBadge(providerName) {
-    const badge = document.getElementById('ai-model-badge');
-    if (badge) {
-        badge.textContent = `🤖 Using: ${providerName}`;
-        badge.style.display = 'block';
-    }
+function showAIBadge(name) {
+    const b = document.getElementById('ai-model-badge');
+    if (b) { b.textContent = `🤖 Using: ${name}`; b.style.display = 'block'; }
 }
 
-// ── Toast notifications ───────────────────────────────────────
+// ── Toast ─────────────────────────────────────────────────────
 function showToast(msg, type = 'info') {
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = msg;
-    document.getElementById('toast-container').appendChild(toast);
-    setTimeout(() => toast.classList.add('show'), 10);
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 400);
-    }, 3500);
+    const t = document.createElement('div');
+    t.className = `toast toast-${type}`;
+    t.textContent = msg;
+    document.getElementById('toast-container').appendChild(t);
+    setTimeout(() => t.classList.add('show'), 10);
+    setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 400); }, 3500);
 }
 
-// ── Input Screen ──────────────────────────────────────────────
-function initInputScreen() {
-    // Location chips
-    const input = document.getElementById('location-input');
-    const chipBox = document.getElementById('chip-box');
+// ── Theme ─────────────────────────────────────────────────────
+let currentTheme = localStorage.getItem('atp_theme') || 'dark';
 
-    function addLocation(val) {
-        const v = val.trim();
-        if (!v || state.locations.includes(v)) return;
-        state.locations.push(v);
-        renderChips();
-        input.value = '';
-    }
+function applyTheme(theme) {
+    currentTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = document.getElementById('theme-btn');
+    if (btn) btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+    localStorage.setItem('atp_theme', theme);
+    setMapTheme(theme); // swap map tiles
+}
+
+function toggleTheme() { applyTheme(currentTheme === 'dark' ? 'light' : 'dark'); }
+
+// ── Location Autocomplete ─────────────────────────────────────
+let _acTimer = null;
+
+async function fetchSuggestions(query) {
+    if (!query || query.length < 2) return [];
+    try {
+        // Photon API (OpenStreetMap-based, no CORS issues, no key required)
+        const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=6&lang=en`;
+        const res = await fetch(url);
+        if (!res.ok) return [];
+        const data = await res.json();
+        const seen = new Set();
+        return (data.features || [])
+            .map(f => {
+                const p = f.properties || {};
+                const city = p.city || p.name || p.county || '';
+                const parts = [city, p.state, p.country].filter(Boolean);
+                const label = parts.join(', ');
+                return { label, name: city || label };
+            })
+            .filter(({ label, name }) => {
+                if (!name || seen.has(label)) return false;
+                seen.add(label); return true;
+            });
+    } catch { return []; }
+}
+
+function showSuggestions(suggestions) {
+    const list = document.getElementById('location-suggestions');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!suggestions.length) { list.classList.add('hidden'); return; }
+    suggestions.forEach(({ label, name }) => {
+        const li = document.createElement('li');
+        li.className = 'location-suggestion-item';
+        li.textContent = label;
+        // mousedown fires before blur — using it prevents the 150ms delay race condition
+        li.addEventListener('mousedown', e => { e.preventDefault(); addLocation(name); hideSuggestions(); });
+        list.appendChild(li);
+    });
+    list.classList.remove('hidden');
+}
+
+function hideSuggestions() {
+    document.getElementById('location-suggestions')?.classList.add('hidden');
+}
+
+// ── Module-level addLocation / renderChips ────────────────────
+// (BUG FIX: was nested inside initInputScreen — unreachable from showSuggestions)
+function addLocation(val) {
+    const v = val.trim();
+    if (!v || state.locations.includes(v)) return;
+    state.locations.push(v);
+    renderChips();
+    const inp = document.getElementById('location-input');
+    if (inp) inp.value = '';
+    hideSuggestions();
+}
+
+function renderChips() {
+    const chipBox = document.getElementById('chip-box');
+    if (!chipBox) return;
+    chipBox.innerHTML = '';
+    state.locations.forEach((loc, idx) => {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        chip.innerHTML = `<span>${loc}</span><button class="chip-remove" data-idx="${idx}">×</button>`;
+        chipBox.appendChild(chip);
+    });
+    chipBox.querySelectorAll('.chip-remove').forEach(btn => {
+        btn.addEventListener('click', () => { state.locations.splice(Number(btn.dataset.idx), 1); renderChips(); });
+    });
+}
+
+// ── Fallback image ────────────────────────────────────────────
+function fallbackImg(name) { return picsumFallback(name); }
+
+// ── Config loading ────────────────────────────────────────────
+function loadConfig() {
+    const isPlaceholder = v => !v || v.startsWith('PASTE_YOUR_');
+    state.config = {
+        geminiKey: isPlaceholder(ENV_KEYS.geminiKey) ? '' : ENV_KEYS.geminiKey,
+        groqKey: isPlaceholder(ENV_KEYS.groqKey) ? '' : ENV_KEYS.groqKey,
+        unsplashKey: isPlaceholder(ENV_KEYS.unsplashKey) ? '' : ENV_KEYS.unsplashKey,
+    };
+}
+
+// ── Input Screen Init ─────────────────────────────────────────
+function initInputScreen() {
+    const input = document.getElementById('location-input');
+
+    input.addEventListener('input', () => {
+        clearTimeout(_acTimer);
+        const q = input.value.trim();
+        if (q.length < 2) { hideSuggestions(); return; }
+        _acTimer = setTimeout(async () => {
+            const suggestions = await fetchSuggestions(q);
+            showSuggestions(suggestions);
+        }, 350);
+    });
 
     input.addEventListener('keydown', e => {
         if (e.key === 'Enter' || e.key === ',') {
             e.preventDefault();
-            addLocation(input.value.replace(',', ''));
+            const v = input.value.replace(',', '').trim();
+            if (v) addLocation(v);
         }
+        if (e.key === 'Escape') hideSuggestions();
     });
 
-    document.getElementById('add-location-btn').addEventListener('click', () => {
-        addLocation(input.value);
-    });
+    input.addEventListener('blur', () => setTimeout(hideSuggestions, 150));
 
-    function renderChips() {
-        chipBox.innerHTML = '';
-        state.locations.forEach((loc, idx) => {
-            const chip = document.createElement('div');
-            chip.className = 'chip';
-            chip.innerHTML = `<span>${loc}</span><button class="chip-remove" data-idx="${idx}">×</button>`;
-            chipBox.appendChild(chip);
-        });
-        chipBox.querySelectorAll('.chip-remove').forEach(btn => {
-            btn.addEventListener('click', () => {
-                state.locations.splice(Number(btn.dataset.idx), 1);
-                renderChips();
-            });
-        });
-    }
+    document.getElementById('add-location-btn').addEventListener('click', () => addLocation(input.value));
 
-    // Date pickers — default to next week
+    // Default dates: today and today + 3 days
     const today = new Date();
-    const nextWk = new Date(today); nextWk.setDate(today.getDate() + 7);
-    const twoWks = new Date(today); twoWks.setDate(today.getDate() + 14);
-    document.getElementById('start-date').valueAsDate = nextWk;
-    document.getElementById('end-date').valueAsDate = twoWks;
+    const plus3 = new Date(today); plus3.setDate(today.getDate() + 3);
+    document.getElementById('start-date').valueAsDate = today;
+    document.getElementById('end-date').valueAsDate = plus3;
 
-    // Plan button
     document.getElementById('plan-btn').addEventListener('click', startPlanning);
 
-    // Settings modal
-    document.getElementById('settings-btn').addEventListener('click', () => {
-        loadSavedKeys();
-        document.getElementById('settings-modal').classList.remove('hidden');
-    });
-    document.getElementById('close-settings').addEventListener('click', () => {
-        document.getElementById('settings-modal').classList.add('hidden');
-    });
-    document.getElementById('save-settings-btn').addEventListener('click', saveKeys);
+    // Navbar: logo → home
+    document.getElementById('home-logo').addEventListener('click', () => showScreen('screen-input'));
+    document.getElementById('home-logo').addEventListener('keydown', e => { if (e.key === 'Enter') showScreen('screen-input'); });
 
-    loadSavedKeys();
-}
+    // Theme toggle
+    document.getElementById('theme-btn').addEventListener('click', toggleTheme);
 
-function loadSavedKeys() {
-    const saved = JSON.parse(localStorage.getItem('tripplanner_config') || '{}');
-    // Env keys take priority, then localStorage, then empty
-    state.config = {
-        geminiKey: ENV_KEYS.geminiKey || saved.geminiKey || '',
-        groqKey: ENV_KEYS.groqKey || saved.groqKey || '',
-    };
-    document.getElementById('key-gemini').value = state.config.geminiKey || '';
-    document.getElementById('key-groq').value = state.config.groqKey || '';
-}
+    // My Trips
+    document.getElementById('mytrips-btn').addEventListener('click', openMyTrips);
+    document.getElementById('mytrips-close').addEventListener('click', () => document.getElementById('mytrips-modal').classList.add('hidden'));
+    document.getElementById('mytrips-clear').addEventListener('click', () => { localStorage.removeItem('atp_saved_trips'); renderMyTripsList(); showToast('All saved trips cleared', 'info'); });
+    document.getElementById('mytrips-modal').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden'); });
 
-function saveKeys() {
-    state.config.geminiKey = document.getElementById('key-gemini').value.trim();
-    state.config.groqKey = document.getElementById('key-groq').value.trim();
-    localStorage.setItem('tripplanner_config', JSON.stringify(state.config));
-    document.getElementById('settings-modal').classList.add('hidden');
-    showToast('API keys saved ✓', 'success');
+    // Place detail modal close / overlay click
+    document.getElementById('place-modal-close').addEventListener('click', closePlaceModal);
+    document.getElementById('place-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closePlaceModal(); });
+
+    // Custom places toggle (home page)
+    const customToggle = document.getElementById('home-custom-toggle');
+    const customBody = document.getElementById('home-custom-body');
+    if (customToggle && customBody) {
+        customToggle.addEventListener('click', () => {
+            const open = customBody.classList.toggle('hidden');
+            customToggle.setAttribute('aria-expanded', String(!open));
+        });
+        // Start collapsed — aria-expanded="false" already set in HTML
+        customBody.classList.add('hidden');
+    }
+
+    // Check share link in URL hash
+    checkShareLink();
 }
 
 // ── Planning Flow ─────────────────────────────────────────────
 async function startPlanning() {
     if (!state.config.geminiKey && !state.config.groqKey) {
-        showToast('Please add at least one API key in Settings ⚙️', 'error');
+        showToast('AI keys are not configured on the server.', 'error');
         return;
     }
-    if (state.locations.length === 0) {
-        showToast('Add at least one location 📍', 'error');
-        return;
-    }
+    if (state.locations.length === 0) { showToast('Add at least one location 📍', 'error'); return; }
     const sd = document.getElementById('start-date').value;
     const ed = document.getElementById('end-date').value;
-    if (!sd || !ed || new Date(ed) < new Date(sd)) {
-        showToast('Please set valid trip dates 📅', 'error');
-        return;
+    if (!sd || !ed || new Date(ed) < new Date(sd)) { showToast('Please set valid trip dates 📅', 'error'); return; }
+    state.startDate = sd; state.endDate = ed;
+
+    // Ingest custom places from home page textarea
+    const customTa = document.getElementById('home-custom-places');
+    if (customTa && customTa.value.trim()) {
+        const names = customTa.value.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+        names.forEach(name => {
+            const existing = state.places.find(p => p.name.toLowerCase() === name.toLowerCase());
+            const place = existing || { name, location: state.locations[0] || '', shortDesc: '', category: 'Heritage' };
+            if (!existing) state.places.push(place);
+            if (!state.selectedPlaces.find(p => p.name === place.name)) state.selectedPlaces.push(place);
+        });
     }
-    state.startDate = sd;
-    state.endDate = ed;
 
     showProgress();
-
-    const onSwitch = (name) => {
-        showAIModelBadge(name);
-        showToast(`Trying ${name}…`, 'info');
-    };
+    const onSwitch = name => { showAIBadge(name); showToast(`Trying ${name}…`, 'info'); };
 
     try {
-        // Step 1 — Fetch famous places
         setProgress(0, STAGES[0]);
-        const places = await fetchFamousPlaces(state.config, state.locations, onSwitch);
+        const placesCacheKey = cacheKey('places', state.locations.join(','));
+        let places = cacheGet(placesCacheKey);
+        if (!places) {
+            places = await fetchFamousPlaces(state.config, state.locations, onSwitch);
+            cacheSet(placesCacheKey, places);
+        }
         state.places = places;
 
-        // Step 2 — Fetch images (Unsplash, no API needed)
         setProgress(1, STAGES[1]);
         const names = [...new Set(places.map(p => p.name))];
-        const imgs = await fetchPlaceImages(names);
-        Object.assign(state.imageCache, imgs);
+        const missing = names.filter(n => !state.imageCache[n]);
+        if (missing.length) {
+            const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
+            Object.assign(state.imageCache, imgs);
+        }
 
         hideProgress();
         renderDiscoveryScreen();
         showScreen('screen-discovery');
 
-    } catch (err) {
-        hideProgress();
-        showToast('Error: ' + err.message, 'error');
-        console.error(err);
-    }
+    } catch (err) { hideProgress(); showToast('Error: ' + err.message, 'error'); console.error(err); }
 }
 
 // ── Discovery Screen ──────────────────────────────────────────
@@ -237,41 +322,34 @@ function renderDiscoveryScreen() {
     const grid = document.getElementById('discovery-grid');
     grid.innerHTML = '';
 
-    // Group by location
     state.locations.forEach(loc => {
-        const locPlaces = state.places.filter(p => p.location?.toLowerCase() === loc.toLowerCase() ||
+        const locPlaces = state.places.filter(p =>
+            p.location?.toLowerCase() === loc.toLowerCase() ||
             p.location?.toLowerCase().includes(loc.toLowerCase()));
         if (!locPlaces.length) return;
 
         const section = document.createElement('div');
         section.className = 'discovery-section';
+        section.dataset.location = loc;
         section.innerHTML = `<h3 class="section-title">📍 ${loc}</h3>`;
+
         const cardRow = document.createElement('div');
         cardRow.className = 'place-card-grid';
-
-        locPlaces.forEach(place => {
-            const imgUrl = state.imageCache[place.name] || `https://source.unsplash.com/400x300/?${encodeURIComponent(place.name)},landmark`;
-            const card = document.createElement('div');
-            card.className = 'place-card';
-            card.dataset.name = place.name;
-            card.innerHTML = `
-        <div class="place-img-wrap">
-          <img src="${imgUrl}" alt="${place.name}" loading="lazy" onerror="this.src='https://source.unsplash.com/400x300/?india,landmark'">
-          <div class="card-check">✓</div>
-          <div class="category-badge">${place.category || ''}</div>
-        </div>
-        <div class="card-body">
-          <div class="card-name">${place.name}</div>
-          <div class="card-desc">${place.shortDesc || ''}</div>
-        </div>`;
-            card.addEventListener('click', () => togglePlaceSelection(card, place));
-            cardRow.appendChild(card);
-        });
         section.appendChild(cardRow);
+
+        locPlaces.forEach(place => renderPlaceCard(place, cardRow));
+
+        // Load More button
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.className = 'load-more-btn';
+        loadMoreBtn.innerHTML = `⬇️ Load More Places in ${loc}`;
+        loadMoreBtn.addEventListener('click', () => loadMorePlaces(loc, section, loadMoreBtn));
+        section.appendChild(loadMoreBtn);
+
         grid.appendChild(section);
     });
 
-    // Auto toggle — replace to clear old listeners
+    // Rebind auto toggle
     const autoToggle = document.getElementById('auto-toggle');
     autoToggle.checked = state.autoMode;
     const newToggle = autoToggle.cloneNode(true);
@@ -283,96 +361,210 @@ function renderDiscoveryScreen() {
         updateSelectionCount();
     });
 
-    // Reset and rebind buttons
-    function rebind(id, fn) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const clone = el.cloneNode(true);
-        el.replaceWith(clone);
-        clone.addEventListener('click', fn);
-    }
+    // Rebind Generate / Back
     rebind('generate-btn', generateItineraryFlow);
     rebind('back-to-input', () => showScreen('screen-input'));
+
+    // Nearby search
+    rebind('nearby-search-btn', doNearbySearch);
+    const nearbyInput = document.getElementById('nearby-input');
+    if (nearbyInput) {
+        const clone = nearbyInput.cloneNode(true);
+        nearbyInput.replaceWith(clone);
+        clone.addEventListener('keydown', e => { if (e.key === 'Enter') doNearbySearch(); });
+    }
+
+    // Custom paste
+    rebind('custom-paste-btn', openCustomPaste);
+
     updateSelectionCount();
+}
+
+function renderPlaceCard(place, container, forNearby = false) {
+    const imgUrl = state.imageCache[place.name] || fallbackImg(place.name);
+    const card = document.createElement('div');
+    card.className = 'place-card';
+    card.dataset.name = place.name;
+    card.innerHTML = `
+      <div class="place-img-wrap">
+        <img src="${imgUrl}" alt="${place.name}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackImg(place.name)}'">
+        <div class="card-check">✓</div>
+        <div class="category-badge">${place.category || ''}</div>
+        <button class="card-detail-btn" title="View details">⤢</button>
+      </div>
+      <div class="card-body">
+        <div class="card-name">${place.name}</div>
+        <div class="card-desc">${place.shortDesc || place.desc?.slice(0, 80) || ''}</div>
+      </div>`;
+
+    // Toggle selection (left-click on card body)
+    card.querySelector('.card-body').addEventListener('click', () => togglePlaceSelection(card, place));
+    card.querySelector('.place-img-wrap').addEventListener('click', e => {
+        if (!e.target.closest('.card-detail-btn')) togglePlaceSelection(card, place);
+    });
+
+    // Detail modal (the ⤢ button)
+    card.querySelector('.card-detail-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        openPlaceModal(place);
+    });
+
+    container.appendChild(card);
+}
+
+async function loadMorePlaces(loc, section, btn) {
+    if (!state.config.geminiKey && !state.config.groqKey) { showToast('No AI keys configured', 'error'); return; }
+    const existingNames = state.places.filter(p => p.location?.toLowerCase().includes(loc.toLowerCase())).map(p => p.name);
+    btn.disabled = true; btn.textContent = '⏳ Loading…';
+
+    const onSwitch = name => showAIBadge(name);
+    try {
+        const more = await fetchMorePlaces(state.config, loc, existingNames, onSwitch);
+        state.places.push(...more);
+        const cardRow = section.querySelector('.place-card-grid');
+        // Fetch images for new places
+        const newNames = more.map(p => p.name).filter(n => !state.imageCache[n]);
+        if (newNames.length) {
+            const imgs = await fetchPlaceImages(newNames, state.config.unsplashKey);
+            Object.assign(state.imageCache, imgs);
+        }
+        more.forEach(place => renderPlaceCard(place, cardRow));
+        btn.textContent = `⬇️ Load More Places in ${loc}`;
+        btn.disabled = false;
+        showToast(`Loaded ${more.length} more places in ${loc}`, 'success');
+    } catch (err) {
+        btn.textContent = `⬇️ Load More Places in ${loc}`;
+        btn.disabled = false;
+        showToast('Failed to load more: ' + err.message, 'error');
+    }
+}
+
+async function doNearbySearch() {
+    const query = document.getElementById('nearby-input')?.value?.trim();
+    if (!query) { showToast('Enter a place to search', 'info'); return; }
+    if (!state.config.geminiKey && !state.config.groqKey) { showToast('No AI keys configured', 'error'); return; }
+
+    const resultsDiv = document.getElementById('nearby-results');
+    resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px;">🔍 Searching…</div>';
+
+    // Include selected locations in query for more accurate results
+    const locContext = state.locations.length ? state.locations.join(', ') : '';
+    const fullQuery = locContext ? `${query} near ${locContext}` : query;
+
+    const onSwitch = name => showAIBadge(name);
+    try {
+        const results = await searchNearbyPlaces(state.config, fullQuery, onSwitch);
+        resultsDiv.innerHTML = '';
+        if (!results.length) { resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>'; return; }
+
+        // Fetch images with location context
+        const imgItems = results.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext }));
+        if (imgItems.length) {
+            const imgs = await fetchPlaceImages(imgItems, state.config.unsplashKey);
+            Object.assign(state.imageCache, imgs);
+        }
+
+        results.forEach(place => {
+            if (!state.places.find(p => p.name === place.name)) state.places.push(place);
+            renderPlaceCard(place, resultsDiv, true);
+        });
+        showToast(`Found ${results.length} places near "${query}"`, 'success');
+    } catch (err) {
+        resultsDiv.innerHTML = '';
+        showToast('Search failed: ' + err.message, 'error');
+    }
 }
 
 function togglePlaceSelection(card, place) {
     if (state.autoMode) return;
     const idx = state.selectedPlaces.findIndex(p => p.name === place.name);
-    if (idx === -1) {
-        state.selectedPlaces.push(place);
-        card.classList.add('selected');
-    } else {
-        state.selectedPlaces.splice(idx, 1);
-        card.classList.remove('selected');
-    }
+    if (idx === -1) { state.selectedPlaces.push(place); card.classList.add('selected'); }
+    else { state.selectedPlaces.splice(idx, 1); card.classList.remove('selected'); }
     updateSelectionCount();
 }
 
 function updateSelectionCount() {
-    const count = state.autoMode ? 'Auto' : state.selectedPlaces.length;
     const el = document.getElementById('selection-count');
-    if (el) el.textContent = state.autoMode ? '🤖 AI will choose the best places' : `${count} place${count !== 1 ? 's' : ''} selected`;
+    if (!el) return;
+    const count = state.selectedPlaces.length;
+    el.textContent = state.autoMode ? '🤖 AI will choose the best places' : `${count} place${count !== 1 ? 's' : ''} selected`;
 }
+
+// ── Place Detail Modal ────────────────────────────────────────
+function openPlaceModal(place) {
+    const img = state.imageCache[place.name] || fallbackImg(place.name);
+    document.getElementById('place-detail-img').src = img;
+    document.getElementById('place-detail-name').textContent = place.name;
+    document.getElementById('place-detail-category').textContent = place.category || '';
+
+    const metaEl = document.getElementById('place-detail-meta');
+    const metaParts = [];
+    if (place.openingHours) metaParts.push('\u23f0 ' + place.openingHours);
+    if (place.entryFee) metaParts.push('\ud83d\udcb0 ' + place.entryFee);
+    if (place.bestTime) metaParts.push('\ud83d\udd50 Best: ' + place.bestTime);
+    if (place.visitDuration) metaParts.push('\u231b ~' + place.visitDuration);
+    metaEl.innerHTML = metaParts.map(p => `<span>${p}</span>`).join('');
+
+    const closedEl = document.getElementById('place-detail-closed');
+    if (place.closedNote) { closedEl.textContent = '\u26a0\ufe0f ' + place.closedNote; closedEl.style.display = 'block'; }
+    else closedEl.style.display = 'none';
+
+    document.getElementById('place-detail-desc').textContent = place.desc || place.shortDesc || '';
+
+    // Text query (name + city) gives far better Google Maps results than raw coordinates
+    const gmapEl = document.getElementById('place-detail-gmap');
+    const city = place.location || (state.locations[0] || '');
+    const gmapQ = encodeURIComponent([place.name, city].filter(Boolean).join(' '));
+    gmapEl.href = `https://www.google.com/maps/search/?api=1&query=${gmapQ}`;
+
+    document.getElementById('place-modal').classList.remove('hidden');
+}
+
+function closePlaceModal() { document.getElementById('place-modal').classList.add('hidden'); }
 
 // ── Itinerary Generation ──────────────────────────────────────
 async function generateItineraryFlow() {
     if (!state.autoMode && state.selectedPlaces.length === 0) {
-        showToast('Select at least one place, or enable Auto mode 🤖', 'error');
-        return;
+        showToast('Select at least one place, or enable Auto mode 🤖', 'error'); return;
     }
     showProgress();
-
-    const onSwitch = (name) => {
-        showAIModelBadge(name);
-        showToast(`Trying ${name}…`, 'info');
-    };
+    const onSwitch = name => { showAIBadge(name); showToast(`Trying ${name}…`, 'info'); };
 
     try {
         setProgress(2, STAGES[2]);
-        const itin = await generateItinerary(
-            state.config,
-            state.locations,
-            state.startDate,
-            state.endDate,
-            state.autoMode ? state.places : state.selectedPlaces,
-            state.autoMode,
-            onSwitch
-        );
+        const itinKey = cacheKey('itin', state.locations.join(','), state.startDate, state.endDate, state.autoMode ? 'auto' : state.selectedPlaces.map(p => p.name).join(','));
+        let itin = cacheGet(itinKey);
+        if (!itin) {
+            itin = await generateItinerary(state.config, state.locations, state.startDate, state.endDate, state.autoMode ? state.places : state.selectedPlaces, state.autoMode, onSwitch);
+            cacheSet(itinKey, itin);
+        }
         state.itinerary = itin;
         state.aiProvider = getLastProvider();
 
-        // Fetch images for any new places not already cached
-        const allPlaceNames = itin.days.flatMap(d => d.places.map(p => p.name));
-        const missing = [...new Set(allPlaceNames.filter(n => !state.imageCache[n]))];
-        if (missing.length) {
-            const newImgs = await fetchPlaceImages(missing);
-            Object.assign(state.imageCache, newImgs);
+        // Fetch images for itinerary places with location context for accurate thumbnails
+        const allPlaceObjs = itin.days.flatMap(d => d.places.map(p => ({ name: p.name, location: d.location || state.locations[0] || '' })));
+        const missingObjs = allPlaceObjs.filter(p => !state.imageCache[p.name]);
+        const dedupedMissing = [...new Map(missingObjs.map(p => [p.name, p])).values()];
+        if (dedupedMissing.length) {
+            Object.assign(state.imageCache, await fetchPlaceImages(dedupedMissing, state.config.unsplashKey));
         }
 
         setProgress(3, STAGES[3]);
         renderItineraryScreen();
         showScreen('screen-itinerary');
 
-        // Init Leaflet map (always works — no API key needed)
         try {
-            await initMap('map-container');
-            plotItinerary(itin, (dayIdx, placeIdx) => {
+            const currentThemeVal = document.documentElement.getAttribute('data-theme') || 'dark';
+            await initMap('map-container', currentThemeVal);
+            plotItinerary(itin, state.imageCache, (dayIdx) => {
                 expandDay(dayIdx);
-                const dayEl = document.querySelector(`[data-day="${dayIdx}"]`);
-                if (dayEl) dayEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            });
-        } catch (mapErr) {
-            console.warn('Map rendering failed:', mapErr);
-        }
+                document.querySelector(`[data-day="${dayIdx}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, state.locations);
+        } catch (mapErr) { console.warn('Map error:', mapErr); }
 
         hideProgress();
 
-    } catch (err) {
-        hideProgress();
-        showToast('Error generating itinerary: ' + err.message, 'error');
-        console.error(err);
-    }
+    } catch (err) { hideProgress(); showToast('Error generating itinerary: ' + err.message, 'error'); console.error(err); }
 }
 
 // ── Itinerary Screen ──────────────────────────────────────────
@@ -383,16 +575,23 @@ function renderItineraryScreen() {
     const accordion = document.getElementById('itinerary-accordion');
     accordion.innerHTML = '';
 
-    // Summary bar
     const totalPlaces = itin.days.reduce((s, d) => s + d.places.length, 0);
-    document.getElementById('itin-summary').textContent =
-        `${itin.days.length} Days · ${state.locations.join(' & ')} · ${totalPlaces} Places`;
+    document.getElementById('itin-summary').textContent = `${itin.days.length} Days · ${state.locations.join(' & ')} · ${totalPlaces} Places`;
 
-    // Show which AI model generated this
+    // AI provider tag
     const providerTag = document.getElementById('ai-provider-tag');
     if (providerTag && state.aiProvider) {
         providerTag.style.display = 'inline-block';
-        providerTag.innerHTML = `<span style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-size:11px;color:var(--accent);">🤖 Generated by ${state.aiProvider}</span>`;
+        providerTag.innerHTML = `<span style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:4px 12px;font-size:11px;color:var(--accent);">🤖 ${state.aiProvider}</span>`;
+    }
+
+    // Budget estimator — tickets only label
+    const budgetEl = document.getElementById('budget-badge');
+    const { total: budgetTotal, perDay } = estimateBudget(itin);
+    if (budgetEl && budgetTotal > 0) {
+        budgetEl.style.display = 'inline-flex';
+        budgetEl.title = perDay.map(d => `Day ${d.day}: \u20b9${d.cost}`).join(' \u00b7 ');
+        budgetEl.innerHTML = `\ud83c\udfdf\ufe0f Tickets: <strong style="margin-left:4px;">\u20b9${budgetTotal.toLocaleString('en-IN')}</strong><span style="font-size:10px;margin-left:6px;opacity:.7;">(travel excl. \u00b7 hover for per-day)</span>`;
     }
 
     itin.days.forEach((day, dayIdx) => {
@@ -401,104 +600,138 @@ function renderItineraryScreen() {
         item.className = 'accordion-item';
         item.dataset.day = dayIdx;
 
+        const dayBudget = perDay.find(d => d.day === day.day);
+        const dayBudgetStr = (dayBudget && dayBudget.cost > 0) ? `<span class="day-cost-tag">₹${dayBudget.cost}</span>` : '';
+
         item.innerHTML = `
-      <div class="accordion-header" style="border-left: 4px solid ${color}">
+      <div class="accordion-header" style="border-left:4px solid ${color}">
         <div class="accordion-header-left">
           <div class="day-badge" style="background:${color}">Day ${day.day}</div>
           <div class="accordion-title-block">
-            <div class="accordion-day-title">${day.theme || 'Explore'}</div>
+            <div class="accordion-day-title">${day.theme || 'Explore'} ${dayBudgetStr}</div>
             <div class="accordion-day-meta">${day.date}${day.location ? ' · ' + day.location : ''} · ${day.places.length} places</div>
           </div>
         </div>
         <div class="accordion-chevron">▾</div>
       </div>
       <div class="accordion-body hidden">
-        ${day.places.map((place, pIdx) => renderPlaceRow(place, pIdx, color)).join('')}
-      </div>
-    `;
+        ${day.places.map((p, pIdx) => renderPlaceRow(p, pIdx, color, dayIdx)).join('')}
+      </div>`;
 
+        // Click header → expand + focus day on map
         item.querySelector('.accordion-header').addEventListener('click', () => {
             const isOpen = !item.querySelector('.accordion-body').classList.contains('hidden');
-            if (isOpen) collapseDay(dayIdx); else expandDay(dayIdx);
+            if (isOpen) { collapseDay(dayIdx); }
+            else { expandDay(dayIdx); focusDay(dayIdx); }
+        });
+
+        // Click individual place rows → focus on map; thumbnail click → detail modal
+        item.querySelectorAll('.place-row').forEach((row, pIdx) => {
+            const place = day.places[pIdx];
+            row.addEventListener('click', () => focusPlace(dayIdx, pIdx));
+            const imgEl = row.querySelector('.place-row-img');
+            if (imgEl && place) {
+                imgEl.addEventListener('click', e => { e.stopPropagation(); openPlaceModal(place); });
+                imgEl.style.cursor = 'zoom-in';
+            }
         });
 
         accordion.appendChild(item);
     });
 
-    // Expand Day 1 by default
     expandDay(0);
 
-    // Rebind all buttons (prevent duplicate listeners on re-render)
-    function rebindItin(id, fn) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const clone = el.cloneNode(true);
-        el.replaceWith(clone);
-        clone.addEventListener('click', fn);
-    }
-    rebindItin('download-txt-btn', () => downloadAsText(state.itinerary, state.locations, state.startDate, state.endDate));
-    rebindItin('download-pdf-btn', async () => await downloadAsPDF(state.itinerary, state.locations, state.startDate, state.endDate));
-    rebindItin('copy-btn', async () => {
-        await copyToClipboard(state.itinerary, state.locations, state.startDate, state.endDate);
-        showToast('Copied to clipboard! 📋', 'success');
-    });
-    rebindItin('back-to-discovery', () => showScreen('screen-discovery'));
-    rebindItin('new-trip-btn', () => {
-        state.itinerary = null;
-        state.selectedPlaces = [];
-        showScreen('screen-input');
-    });
+    // Rebind action buttons
+    rebind('download-txt-btn', () => downloadAsText(state.itinerary, state.locations, state.startDate, state.endDate));
+    rebind('download-pdf-btn', async () => await downloadAsPDF(state.itinerary, state.locations, state.startDate, state.endDate, state.imageCache));
+    rebind('copy-btn', async () => { await copyToClipboard(state.itinerary, state.locations, state.startDate, state.endDate); showToast('Copied to clipboard! \ud83d\udccb', 'success'); });
+    rebind('back-to-discovery', () => showScreen('screen-discovery'));
+    rebind('new-trip-btn', () => { state.itinerary = null; state.selectedPlaces = []; showScreen('screen-input'); });
+    rebind('save-trip-btn', saveCurrentTrip);
+    rebind('share-trip-btn', shareTrip);
+    rebind('map-reset-focus', resetFocus);
 
-    // Populate day legend
+    // Legend
     const legend = document.getElementById('day-legend');
     if (legend) {
         legend.innerHTML = '';
         itin.days.forEach((day, idx) => {
             const color = DAY_COLORS[idx % DAY_COLORS.length];
-            const item = document.createElement('div');
-            item.className = 'day-legend-item';
-            item.innerHTML = `<div class="day-dot" style="background:${color}"></div><span>Day ${day.day}${day.location ? ' · ' + day.location : ''}</span>`;
-            legend.appendChild(item);
+            const it = document.createElement('div');
+            it.className = 'day-legend-item';
+            it.innerHTML = `<div class="day-dot" style="background:${color}"></div><span>Day ${day.day}${day.location ? ' · ' + day.location : ''}</span>`;
+            it.addEventListener('click', () => { expandDay(idx); focusDay(idx); });
+            it.style.cursor = 'pointer';
+            legend.appendChild(it);
         });
     }
 }
 
-function renderPlaceRow(place, pIdx, dayColor) {
-    const img = state.imageCache[place.name] ||
-        `https://source.unsplash.com/160x120/?${encodeURIComponent(place.name)},landmark`;
+function renderPlaceRow(place, pIdx, dayColor, dayIdx) {
+    const img = state.imageCache[place.name] || fallbackImg(place.name);
     const commute = place.commute_from_prev;
-    const commuteHTML = (pIdx > 0 && commute) ? `
-    <div class="commute-row">
-      ${commute.walk && commute.walk !== 'N/A' ? `<span class="commute-badge walk">🚶 ${commute.walk}</span>` : ''}
-      ${commute.cab && commute.cab !== 'N/A' ? `<span class="commute-badge cab">🚕 ${commute.cab}</span>` : ''}
-      ${commute.metro && commute.metro !== 'N/A' ? `<span class="commute-badge metro">🚇 ${commute.metro}</span>` : ''}
-    </div>` : '';
+    // Build collapsible commute row
+    let commuteHTML = '';
+    if (pIdx > 0 && commute) {
+        const rows = [];
+        if (commute.walk && commute.walk !== 'N/A') rows.push(`<div class="commute-detail-row"><span class="commute-badge walk">\ud83d\udeb6 Walk</span><span class="commute-detail-text">${commute.walk}</span></div>`);
+        if (commute.metro && commute.metro !== 'N/A') rows.push(`<div class="commute-detail-row"><span class="commute-badge metro">\ud83d\ude87 Metro</span><span class="commute-detail-text">${commute.metro}</span></div>`);
+        if (commute.cab && commute.cab !== 'N/A') rows.push(`<div class="commute-detail-row"><span class="commute-badge cab">\ud83d\ude95 Cab</span><span class="commute-detail-text">${commute.cab}</span></div>`);
+        if (rows.length) {
+            const quickest = rows[0].match(/class="commute-detail-text">([^<]+)/)?.[1] || '';
+            const uid = `c-${dayIdx}-${pIdx}`;
+            commuteHTML = `
+    <div class="commute-collapsible">
+      <button class="commute-summary-btn" onclick="(function(el){el.closest('.commute-collapsible').classList.toggle('open')})(this)" aria-expanded="false">
+        <span class="commute-arrow">\u2192</span>
+        <span class="commute-summary-text">Getting there &middot; ${quickest}</span>
+        <span class="commute-chevron">&and;</span>
+      </button>
+      <div class="commute-detail-body">${rows.join('')}</div>
+    </div>`;
+        }
+    }
+
+    const closedNote = place.closedNote ? `<div class="place-closed-note">⚠️ ${place.closedNote}</div>` : '';
+    // Text-based Google Maps query (name + city) is more useful than coordinates
+    const city = place.location || (state.locations[0] || '');
+    const gmapQ = encodeURIComponent([place.name, city].filter(Boolean).join(' '));
+    const gmapUrl = `https://www.google.com/maps/search/?api=1&query=${gmapQ}`;
+
+    // Arrival time pill: shown at start of place name line
+    const timeTag = place.arrivalTime
+        ? `<span class="arrival-time-tag" style="background:${dayColor}18;color:${dayColor};border-color:${dayColor}44;">${place.arrivalTime}</span>`
+        : '';
+    const durationTag = place.visitDuration
+        ? `<span class="visit-dur-tag">⌛ ~${place.visitDuration}</span>`
+        : '';
 
     return `
     ${commuteHTML}
-    <div class="place-row">
+    <div class="place-row" style="cursor:pointer" title="Click to focus on map">
       <div class="place-row-num" style="background:${dayColor}22;color:${dayColor};">${pIdx + 1}</div>
       <img class="place-row-img" src="${img}" alt="${place.name}"
-           onerror="this.src='https://source.unsplash.com/160x120/?india,landmark'" loading="lazy">
+           onerror="this.onerror=null;this.src='${fallbackImg(place.name)}'" loading="lazy">
       <div class="place-row-info">
-        <div class="place-row-name">${place.name}</div>
-        ${place.openingHours || place.entryFee ? `
+        <div class="place-row-name">${timeTag} ${place.name} ${durationTag}</div>
+        ${place.openingHours || place.entryFee || place.bestTime ? `
           <div class="place-row-meta">
             ${place.openingHours ? `<span>⏰ ${place.openingHours}</span>` : ''}
             ${place.entryFee ? `<span>💰 ${place.entryFee}</span>` : ''}
+            ${place.bestTime ? `<span>🌅 ${place.bestTime}</span>` : ''}
           </div>` : ''}
+        ${closedNote}
         <div class="place-row-desc">${place.desc || ''}</div>
       </div>
+      <a class="place-gmap-link" href="${gmapUrl}" target="_blank" rel="noopener" title="Open in Google Maps" onclick="event.stopPropagation()">🗺️</a>
     </div>`;
 }
 
 function expandDay(dayIdx) {
     document.querySelectorAll('.accordion-item').forEach((item, idx) => {
-        const body = item.querySelector('.accordion-body');
-        const chevron = item.querySelector('.accordion-chevron');
         if (idx === dayIdx) {
-            body.classList.remove('hidden');
-            chevron.style.transform = 'rotate(180deg)';
+            item.querySelector('.accordion-body').classList.remove('hidden');
+            item.querySelector('.accordion-chevron').style.transform = 'rotate(180deg)';
             item.classList.add('open');
         }
     });
@@ -514,10 +747,235 @@ function collapseDay(dayIdx) {
     });
 }
 
-// ── Init ─────────────────────────────────────────────────────
+// ── Budget Estimator ──────────────────────────────────────────
+function estimateBudget(itin) {
+    let total = 0;
+    const perDay = itin.days.map(day => {
+        let dayCost = 0;
+        day.places.forEach(place => {
+            const fee = place.entryFee || '';
+            const match = fee.match(/[\u20B9\u20b9]?\s*(\d+)/);
+            if (match) { const n = parseInt(match[1], 10); dayCost += n; total += n; }
+        });
+        return { day: day.day, cost: dayCost };
+    });
+    return { total, perDay };
+}
+
+// ── Save trip ─────────────────────────────────────────────────
+function saveCurrentTrip() {
+    const trips = JSON.parse(localStorage.getItem('atp_saved_trips') || '[]');
+    const trip = {
+        id: Date.now().toString(),
+        savedAt: new Date().toISOString(),
+        locations: state.locations,
+        startDate: state.startDate,
+        endDate: state.endDate,
+        summary: state.itinerary?.summary || '',
+        itinerary: state.itinerary,
+        imageCache: state.imageCache,
+    };
+    trips.unshift(trip);
+    const trimmed = trips.slice(0, 5); // max 5 saved
+    localStorage.setItem('atp_saved_trips', JSON.stringify(trimmed));
+    showToast('Trip saved! 💾', 'success');
+}
+
+// ── Share trip (encode key params in URL hash) ─────────────────
+function shareTrip() {
+    const customTa = document.getElementById('home-custom-places');
+    const customPlaces = customTa ? customTa.value.trim() : '';
+
+    const shareData = { l: state.locations, s: state.startDate, e: state.endDate, c: customPlaces };
+    const encoded = btoa(encodeURIComponent(JSON.stringify(shareData)));
+    const url = `${location.origin}${location.pathname}#share=${encoded}`;
+    navigator.clipboard.writeText(url).then(() => showToast('Share link copied! 🔗', 'success')).catch(() => showToast('Could not copy to clipboard', 'error'));
+}
+
+function checkShareLink() {
+    const hash = location.hash;
+    if (!hash.startsWith('#share=')) return;
+    try {
+        const data = JSON.parse(decodeURIComponent(atob(hash.slice(7))));
+        if (data.l?.length) { state.locations = data.l; renderChips(); }
+        if (data.s) document.getElementById('start-date').value = data.s;
+        if (data.e) document.getElementById('end-date').value = data.e;
+        if (data.c) {
+            const customTa = document.getElementById('home-custom-places');
+            if (customTa) {
+                customTa.value = data.c;
+                // Expand toggle so user sees it
+                const customToggle = document.getElementById('home-custom-toggle');
+                const customBody = document.getElementById('home-custom-body');
+                if (customToggle && customBody) {
+                    customBody.classList.remove('hidden');
+                    customToggle.setAttribute('aria-expanded', 'true');
+                }
+            }
+        }
+        showToast('Trip link loaded! Click "Plan My Trip" 🗺️', 'success');
+        history.replaceState(null, '', location.pathname); // clear hash
+    } catch { /* ignore malformed hash */ }
+}
+
+// ── My Trips ──────────────────────────────────────────────────
+function openMyTrips() {
+    renderMyTripsList();
+    document.getElementById('mytrips-modal').classList.remove('hidden');
+}
+
+function renderMyTripsList() {
+    const list = document.getElementById('mytrips-list');
+    const trips = JSON.parse(localStorage.getItem('atp_saved_trips') || '[]');
+    if (!trips.length) { list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);">No saved trips yet.<br>Plan a trip and click 💾 Save!</div>'; return; }
+
+    list.innerHTML = '';
+    trips.forEach((trip, idx) => {
+        const item = document.createElement('div');
+        item.className = 'saved-trip-item';
+        const date = new Date(trip.savedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        item.innerHTML = `
+          <div style="flex:1;">
+            <div class="saved-trip-name">${trip.locations.join(' + ')}</div>
+            <div class="saved-trip-meta">${trip.startDate} → ${trip.endDate} · Saved ${date}</div>
+            ${trip.summary ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">${trip.summary.slice(0, 80)}…</div>` : ''}
+          </div>
+          <button class="saved-trip-del" data-idx="${idx}" title="Delete">✕</button>`;
+
+        // Load this trip
+        item.querySelector('.saved-trip-name').addEventListener('click', () => loadSavedTrip(trip));
+        item.querySelector('.saved-trip-meta').addEventListener('click', () => loadSavedTrip(trip));
+
+        // Delete
+        item.querySelector('.saved-trip-del').addEventListener('click', e => {
+            e.stopPropagation();
+            trips.splice(idx, 1);
+            localStorage.setItem('atp_saved_trips', JSON.stringify(trips));
+            renderMyTripsList();
+        });
+
+        list.appendChild(item);
+    });
+}
+
+function loadSavedTrip(trip) {
+    state.locations = trip.locations;
+    state.startDate = trip.startDate;
+    state.endDate = trip.endDate;
+    state.itinerary = trip.itinerary;
+    state.imageCache = trip.imageCache || {};
+    state.aiProvider = '';
+    document.getElementById('mytrips-modal').classList.add('hidden');
+    renderChips();
+    renderItineraryScreen();
+    showScreen('screen-itinerary');
+    showToast('Trip loaded! \ud83d\uddfa\ufe0f', 'success');
+    try {
+        const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+        initMap('map-container', theme).then(() =>
+            plotItinerary(trip.itinerary, state.imageCache, (dayIdx) => expandDay(dayIdx), state.locations)
+        );
+    } catch { /* ignore */ }
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function rebind(id, fn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const clone = el.cloneNode(true);
+    el.replaceWith(clone);
+    clone.addEventListener('click', fn);
+}
+
+// ── Custom Paste Places ───────────────────────────────────────
+function openCustomPaste() {
+    document.getElementById('custom-paste-modal')?.classList.remove('hidden');
+    setTimeout(() => document.getElementById('custom-paste-input')?.focus(), 50);
+}
+function closeCustomPaste() {
+    document.getElementById('custom-paste-modal')?.classList.add('hidden');
+    const inp = document.getElementById('custom-paste-input');
+    if (inp) inp.value = '';
+}
+function applyCustomPaste() {
+    const raw = document.getElementById('custom-paste-input')?.value || '';
+    if (!raw.trim()) { closeCustomPaste(); return; }
+    const names = raw.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+    let added = 0;
+    names.forEach(name => {
+        const existing = state.places.find(p => p.name.toLowerCase() === name.toLowerCase());
+        const place = existing || { name, location: state.locations[0] || '', shortDesc: '', category: 'Heritage' };
+        if (!existing) state.places.push(place);
+        if (!state.selectedPlaces.find(p => p.name === place.name)) {
+            state.selectedPlaces.push(place);
+            added++;
+        }
+    });
+    closeCustomPaste();
+    showToast(`Added ${added} custom place${added !== 1 ? 's' : ''} to selection`, 'success');
+    updateSelectionCount();
+    // Refresh grid to show new cards
+    renderDiscoveryScreen();
+    setTimeout(() => {
+        document.querySelectorAll('.place-card').forEach(card => {
+            if (state.selectedPlaces.find(p => p.name === card.dataset.name)) card.classList.add('selected');
+        });
+    }, 50);
+}
+
+// ── Card detail button style (injected since it's inside img-wrap) ─
+function injectCardDetailBtnStyle() {
+    const style = document.createElement('style');
+    style.textContent = `.card-detail-btn{position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);border:none;border-radius:7px;color:#fff;font-size:13px;width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s;z-index:2}.card-detail-btn:hover{background:rgba(99,102,241,.7)}`;
+    document.head.appendChild(style);
+}
+
+// -- Init --
+function injectCustomPasteModal() {
+    if (document.getElementById('custom-paste-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'custom-paste-modal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = [
+        '<div class="modal-card" style="max-width:500px;width:100%;">',
+        '<div class="modal-header"><div class="modal-title">📝 Paste Custom Places</div>',
+        '<button class="modal-close" id="paste-modal-close">✕</button></div>',
+        '<p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">',
+        'Paste place names (one per line or comma-separated). They will be added to your selection.</p>',
+        '<textarea id="custom-paste-input" class="input-field" style="min-height:140px;resize:vertical;font-size:13px;"',
+        ' placeholder="Red Fort&#10;Qutub Minar&#10;India Gate"></textarea>',
+        '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">',
+        '<button class="btn btn-ghost btn-sm" id="paste-cancel-btn">Cancel</button>',
+        '<button class="btn btn-primary btn-sm" id="paste-apply-btn">Add Places</button>',
+        '</div></div>'
+    ].join('');
+    document.body.appendChild(modal);
+    modal.querySelector('#paste-modal-close').addEventListener('click', closeCustomPaste);
+    modal.querySelector('#paste-cancel-btn').addEventListener('click', closeCustomPaste);
+    modal.querySelector('#paste-apply-btn').addEventListener('click', applyCustomPaste);
+    modal.addEventListener('click', e => { if (e.target === modal) closeCustomPaste(); });
+
+    // Inject paste button next to nearby search
+    const searchBtn = document.getElementById('nearby-search-btn');
+    if (searchBtn && !document.getElementById('custom-paste-btn')) {
+        const btn = document.createElement('button');
+        btn.id = 'custom-paste-btn';
+        btn.className = 'btn btn-ghost btn-sm';
+        btn.title = 'Paste a list of place names';
+        btn.textContent = '📝 Paste List';
+        btn.style.whiteSpace = 'nowrap';
+        searchBtn.after(btn);
+        btn.addEventListener('click', openCustomPaste);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await loadEnvKeys();
-    loadSavedKeys();
+    loadConfig();
+    applyTheme(currentTheme);
+    injectCardDetailBtnStyle();
     initInputScreen();
     showScreen('screen-input');
+    // Inject custom paste modal after all screens are set up
+    injectCustomPasteModal();
 });
