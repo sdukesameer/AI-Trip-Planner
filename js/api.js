@@ -230,8 +230,19 @@ export async function searchNearbyPlaces(config, query, onProviderSwitch) {
     const prompt = `You are a travel expert. List 6 famous tourist attractions near or in "${locationLabel}". ${coordsLine}
 Each item: { "location": "<area or city>", "name": "<place name>", "shortDesc": "<1 sentence description>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>" }
 Return ONLY valid JSON array, no explanation.`;
-    const text = await smartAICall(prompt, config, onProviderSwitch);
-    return extractJSON(text);
+
+    // Implement a timeout to prevent hanging searches
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        const text = await smartAICall(prompt, config, onProviderSwitch);
+        return extractJSON(text);
+    } catch (err) {
+        if (err.name === 'AbortError') throw new Error('Search timed out. Try a different query.');
+        throw err;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 // ── API Call 2: Fetch Unsplash Images ────────────────────────
@@ -306,6 +317,12 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
 export function picsumFallback(name) {
     const seed = Math.abs(name.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % 1000;
     return `https://picsum.photos/seed/${seed}/400/300`;
+}
+
+export function svgPlaceholder(name) {
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+    const color = colors[Math.abs(name.charCodeAt(0)) % colors.length];
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect fill='${color.slice(1)}' width='400' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='0.3em' fill='%23fff' font-family='Arial' font-size='24'%3E${encodeURIComponent(name.slice(0, 20))}%3C/text%3E%3C/svg%3E`;
 }
 
 // ── API Call 3: Generate Itinerary ───────────────────────────

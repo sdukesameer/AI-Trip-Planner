@@ -4,11 +4,14 @@
 
 import {
     fetchFamousPlaces, fetchMorePlaces, searchNearbyPlaces,
-    fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback,
+    fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback, svgPlaceholder,
     enrichCustomPlaces, fetchWeatherForDays, weatherEmoji
 } from './api.js';
 import { initMap, plotItinerary, focusDay, focusPlace, resetFocus, setMapTheme } from './maps.js';
 import { downloadAsText, downloadAsPDF, copyToClipboard } from './download.js';
+
+// ── Global Locale ──────────────────────────────────────────────
+const LOCALE = typeof navigator !== 'undefined' ? (navigator.language || 'en-IN') : 'en-IN';
 
 // ── ENV keys (injected at Netlify build time) ─────────────────
 let ENV_KEYS = {};
@@ -57,10 +60,14 @@ function showScreen(id) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+// ── Modals ────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id)?.classList.remove('hidden'); }
+function closeModal(id) { document.getElementById(id)?.classList.add('hidden'); }
+
 // ── Progress ──────────────────────────────────────────────────
 const STAGES = ['Fetching famous places…', 'Loading place images…', 'Building smart itinerary…', 'Rendering map & results…'];
 
-function showProgress() { document.getElementById('progress-overlay').classList.remove('hidden'); setProgress(0, STAGES[0]); }
+function showProgress() { openModal('progress-overlay'); setProgress(0, STAGES[0]); }
 
 function setProgress(step, label) {
     const pct = Math.round((step / STAGES.length) * 100);
@@ -77,7 +84,7 @@ function setProgress(step, label) {
 }
 
 function hideProgress() {
-    document.getElementById('progress-overlay').classList.add('hidden');
+    closeModal('progress-overlay');
     setProgress(0, '');
     const badge = document.getElementById('ai-model-badge');
     if (badge) badge.style.display = 'none';
@@ -239,6 +246,7 @@ function renderChips() {
 
 // ── Fallback image ────────────────────────────────────────────
 function fallbackImg(name) { return picsumFallback(name); }
+function getSvgFallback(name) { return svgPlaceholder(name); }
 
 // Loose place name similarity — strips punctuation, checks word overlap
 function placesAreSimilar(a, b) {
@@ -330,9 +338,9 @@ function initInputScreen() {
 
     // My Trips
     document.getElementById('mytrips-btn').addEventListener('click', openMyTrips);
-    document.getElementById('mytrips-close').addEventListener('click', () => document.getElementById('mytrips-modal').classList.add('hidden'));
+    document.getElementById('mytrips-close').addEventListener('click', () => closeModal('mytrips-modal'));
     document.getElementById('mytrips-clear').addEventListener('click', () => { localStorage.removeItem('atp_saved_trips'); renderMyTripsList(); showToast('All saved trips cleared', 'info'); });
-    document.getElementById('mytrips-modal').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden'); });
+    document.getElementById('mytrips-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal('mytrips-modal'); });
 
     // Place detail modal close / overlay click
     document.getElementById('place-modal-close').addEventListener('click', closePlaceModal);
@@ -362,6 +370,32 @@ function initInputScreen() {
 
     // Check share link in URL hash
     checkShareLink();
+
+    // Global keyboard shortcuts
+    document.addEventListener('keydown', e => {
+        // Close modals on Escape
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'));
+        }
+
+        // Ctrl/Cmd + S to save trip (if on itinerary screen)
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            const saveBtn = document.getElementById('save-trip-btn');
+            if (saveBtn && document.getElementById('screen-itinerary').classList.contains('active')) {
+                e.preventDefault();
+                saveBtn.click();
+            }
+        }
+
+        // Ctrl/Cmd + D to download PDF (if on itinerary screen)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+            const dlBtn = document.getElementById('download-pdf-btn');
+            if (dlBtn && document.getElementById('screen-itinerary').classList.contains('active')) {
+                e.preventDefault();
+                dlBtn.click();
+            }
+        }
+    });
 }
 
 // ── Planning Flow ─────────────────────────────────────────────
@@ -578,7 +612,7 @@ function renderPlaceCard(place, container, forNearby = false) {
     card.dataset.name = place.name;
     card.innerHTML = `
       <div class="place-img-wrap">
-        <img src="${imgUrl}" alt="${place.name}" loading="lazy" onerror="this.onerror=null;this.src='${fallbackImg(place.name)}'">
+        <img src="${imgUrl}" alt="${place.name}" loading="lazy" onerror="this.onerror=null;this.src='${getSvgFallback(place.name)}'">
         <div class="card-check">✓</div>
         <div class="category-badge">${place.category || ''}</div>
         <button class="card-detail-btn" title="View details">⤢</button>
@@ -712,7 +746,9 @@ function updateSelectionCount() {
 // ── Place Detail Modal ────────────────────────────────────────
 function openPlaceModal(place) {
     const img = state.imageCache[place.name] || fallbackImg(place.name);
-    document.getElementById('place-detail-img').src = img;
+    const imgEl = document.getElementById('place-detail-img');
+    imgEl.src = img;
+    imgEl.onerror = () => { imgEl.onerror = null; imgEl.src = getSvgFallback(place.name); };
     document.getElementById('place-detail-name').textContent = place.name;
     document.getElementById('place-detail-category').textContent = place.category || '';
 
@@ -736,10 +772,10 @@ function openPlaceModal(place) {
     const gmapQ = encodeURIComponent([place.name, city].filter(Boolean).join(' '));
     gmapEl.href = `https://www.google.com/maps/search/?api=1&query=${gmapQ}`;
 
-    document.getElementById('place-modal').classList.remove('hidden');
+    openModal('place-modal');
 }
 
-function closePlaceModal() { document.getElementById('place-modal').classList.add('hidden'); }
+function closePlaceModal() { closeModal('place-modal'); }
 
 // ── Itinerary Generation ──────────────────────────────────────
 async function generateItineraryFlow() {
@@ -810,7 +846,17 @@ async function generateItineraryFlow() {
                 expandDay(dayIdx);
                 document.querySelector(`[data-day="${dayIdx}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, state.locations);
-        } catch (mapErr) { console.warn('Map error:', mapErr); }
+        } catch (mapErr) {
+            console.error('[Map error]', mapErr);
+            const mapContainer = document.getElementById('map-container');
+            if (mapContainer) {
+                mapContainer.innerHTML = `<div class="map-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:20px;background:var(--bg-elevated);border-radius:12px;border:1px solid var(--border);">
+                    <div class="map-placeholder-icon" style="font-size:40px;margin-bottom:12px;">⚠️</div>
+                    <div class="map-placeholder-title" style="font-weight:600;font-size:18px;color:var(--text-primary);margin-bottom:8px;">Map failed to load</div>
+                    <div class="map-placeholder-sub" style="font-size:13px;color:var(--text-secondary);max-width:300px;">${mapErr.message}</div>
+                </div>`;
+            }
+        }
 
         hideProgress();
 
@@ -965,7 +1011,7 @@ function renderPlaceRow(place, pIdx, dayColor, dayIdx) {
     <div class="place-row" style="cursor:pointer" title="Click to focus on map">
       <div class="place-row-num" style="background:${dayColor}22;color:${dayColor};">${pIdx + 1}</div>
       <img class="place-row-img" src="${img}" alt="${place.name}"
-           onerror="this.onerror=null;this.src='${fallbackImg(place.name)}'" loading="lazy">
+           onerror="this.onerror=null;this.src='${getSvgFallback(place.name)}'" loading="lazy">
       <div class="place-row-info">
         <div class="place-row-name">${timeTag} ${place.name} ${durationTag}</div>
         ${place.openingHours || place.entryFee || place.bestTime ? `
@@ -1043,7 +1089,7 @@ function saveCurrentTrip() {
 
     // Guard: localStorage limit is ~5 MB; warn if we're approaching it
     const sizeKB = Math.round((serialized.length * 2) / 1024); // UTF-16 = 2 bytes/char
-    if (sizeKB > 4500) {
+    if (sizeKB > 3800) { // Leave 1–2 MB buffer
         // Try saving without oldest trip
         const smaller = JSON.stringify(trimmed.slice(0, -1));
         if (smaller.length * 2 / 1024 < 4500) {
@@ -1107,7 +1153,7 @@ function checkShareLink() {
 // ── My Trips ──────────────────────────────────────────────────
 function openMyTrips() {
     renderMyTripsList();
-    document.getElementById('mytrips-modal').classList.remove('hidden');
+    openModal('mytrips-modal');
 }
 
 function renderMyTripsList() {
@@ -1119,7 +1165,7 @@ function renderMyTripsList() {
     trips.forEach((trip, idx) => {
         const item = document.createElement('div');
         item.className = 'saved-trip-item';
-        const date = new Date(trip.savedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        const date = new Date(trip.savedAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
         item.innerHTML = `
           <div style="flex:1;">
             <div class="saved-trip-name">${trip.locations.join(' + ')}</div>
@@ -1151,7 +1197,7 @@ function loadSavedTrip(trip) {
     state.itinerary = trip.itinerary;
     state.imageCache = trip.imageCache || {};
     state.aiProvider = '';
-    document.getElementById('mytrips-modal').classList.add('hidden');
+    closeModal('mytrips-modal');
     renderChips();
     renderItineraryScreen();
     showScreen('screen-itinerary');
@@ -1175,11 +1221,11 @@ function rebind(id, fn) {
 
 // ── Custom Paste Places ───────────────────────────────────────
 function openCustomPaste() {
-    document.getElementById('custom-paste-modal')?.classList.remove('hidden');
+    openModal('custom-paste-modal');
     setTimeout(() => document.getElementById('custom-paste-input')?.focus(), 50);
 }
 function closeCustomPaste() {
-    document.getElementById('custom-paste-modal')?.classList.add('hidden');
+    closeModal('custom-paste-modal');
     const inp = document.getElementById('custom-paste-input');
     if (inp) inp.value = '';
 }

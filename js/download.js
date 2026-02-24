@@ -5,6 +5,7 @@
 const DAY_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1'];
 const DAY_EMOJIS = ['🟦', '🟩', '🟨', '🟥', '🟪', '🩷', '🩵', '🟧', '🟢', '🔵'];
 const FLAG_MAP = { 'India': '🇮🇳', 'France': '🇫🇷', 'USA': '🇺🇸', 'UK': '🇬🇧', 'Japan': '🇯🇵', 'Italy': '🇮🇹', 'Spain': '🇪🇸', 'Germany': '🇩🇪', 'Australia': '🇦🇺', 'UAE': '🇦🇪' };
+const LOCALE = typeof navigator !== 'undefined' ? (navigator.language || 'en-IN') : 'en-IN';
 
 // ── Helper: pick country flag from location name ──────────────
 function getFlag(locations) {
@@ -323,10 +324,10 @@ function loadScript(src) {
 
 function formatDateRange(start, end) {
     const opts = { day: 'numeric', month: 'long', year: 'numeric' };
-    return `${new Date(start).toLocaleDateString('en-IN', opts)} – ${new Date(end).toLocaleDateString('en-IN', opts)}`;
+    return `${new Date(start).toLocaleDateString(LOCALE, opts)} – ${new Date(end).toLocaleDateString(LOCALE, opts)}`;
 }
 
 function formatWeekday(dateStr) {
     const d = new Date(dateStr);
-    return d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return d.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }

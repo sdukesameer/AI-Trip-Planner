@@ -2,7 +2,7 @@
 node_modules/
 
 # Auto-generated env file (contains API keys)
-js/env.js
+# Removed js/env.js as requested so users can easily edit it over git.
 
 # OS
 .DS_Store

@@ -49,6 +49,7 @@ Users can:
 |---|---|
 | 🤖 Multi-provider AI | Gemini 2.0 Flash → Gemini 2.0 Flash-Lite → Groq Llama → Groq Mixtral (auto-fallback) |
 | 🗺️ Interactive Map | Leaflet + OpenStreetMap: pin-drop markers, day-focus, polyline routes, popups with images |
+| 🌤️ Daily Weather | OpenWeatherMap integration showing daily forecast for each destination (Optional) |
 | 📅 Realistic Scheduling | Day starts 10 AM, places ordered by `arrivalTime` with actual visit durations |
 | 📍 Geographic Clustering | AI groups places within ~5 km radius on the same day |
 | 🔍 Place Discovery | Photon-geocoded "Search Nearby" with AI-powered results |
@@ -73,6 +74,7 @@ Users can:
 | AI (primary) | [Google Gemini API](https://ai.google.dev/) — `gemini-2.0-flash` |
 | AI (fallback) | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
 | Images | [Unsplash API](https://unsplash.com/developers) |
+| Weather | [OpenWeatherMap API](https://openweathermap.org/api) |
 | Geocoding | [Photon API](https://photon.komoot.io/) (OpenStreetMap-backed, no key required) |
 | PDF | [jsPDF](https://github.com/parallax/jsPDF) 2.5 (CDN) |
 | Deployment | [Netlify](https://netlify.com/) (static hosting + env injection via build script) |
@@ -207,6 +209,11 @@ interface AppState {
 - **Used for:** Location autocomplete on the input screen
 - **Key required:** None ✅ CORS-free ✅
 
+### OpenWeatherMap
+- **Endpoint:** `https://api.openweathermap.org/data/2.5/forecast` (via Netlify function `weather-proxy`)
+- **Used for:** Displaying daily temperature and weather conditions for the itinerary
+- **Key required:** Yes (Optional, fails gracefully without it)
+
 ---
 
 ## Environment Variables
@@ -218,8 +225,9 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 | `GEMINI_API_KEY` | Google AI Studio API key | Recommended |
 | `GROQ_API_KEY` | Groq Cloud API key | Recommended |
 | `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | Optional (Picsum fallback) |
+| `OPENWEATHER_API_KEY` | OpenWeatherMap API key | Optional (fails gracefully) |
 
-> **Security:** Keys are injected at build time by `build-env.js` into `js/env.js`, which is `.gitignore`d. Keys are **never** committed or exposed in the repository.
+> **Security:** In production, keys are injected at build time by `build-env.js` into `js/env.js` via Netlify environment variables. Locally, you can edit the pre-included `js/env.js` file directly, but **never** commit your actual API keys to a public repository!
 
 ### Getting API Keys
 
@@ -228,6 +236,7 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 | Gemini | https://aistudio.google.com/apikey | ✅ Yes |
 | Groq | https://console.groq.com/keys | ✅ Yes |
 | Unsplash | https://unsplash.com/developers | ✅ 50 req/hr |
+| OpenWeatherMap | https://openweathermap.org/api | ✅ 1,000 req/day |
 
 ---
 
@@ -242,8 +251,7 @@ cd AI-Trip-Planner
 npm install
 
 # 3. Set up your local API keys
-cp js/env.example.js js/env.js
-# Edit js/env.js and paste your API keys
+# Open js/env.js and paste your API keys instead of the placeholders
 
 # 4. Start dev server (serves on http://localhost:3000)
 npm run dev
