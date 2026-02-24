@@ -1103,14 +1103,43 @@ function saveCurrentTrip() {
 
     try {
         localStorage.setItem('atp_saved_trips', serialized);
-        showToast(`Trip saved! 💾 (~${sizeKB} KB used)`, 'success');
+        const storage = calculateStorageUsed();
+        showToast(`Trip saved! 💾 (${storage.percentUsed}% · ${storage.usedKB} KB / ${storage.maxKB} KB)`, 'success');
     } catch (e) {
         if (e.name === 'QuotaExceededError') {
-            showToast('Storage full! Delete old trips from My Trips 🗑️', 'error');
+            const storage = calculateStorageUsed();
+            showToast(`Storage full! (${storage.percentUsed}%) Delete old trips from My Trips 🗑️`, 'error');
         } else {
             showToast('Could not save trip: ' + e.message, 'error');
         }
     }
+}
+
+// Estimate storage usage of saved trips and warn if approaching limit
+function calculateStorageUsed() {
+    try {
+        const tripsJSON = localStorage.getItem('atp_saved_trips') || '[]';
+        const sizeBytes = new Blob([tripsJSON]).size;
+        const sizeKB = Math.round(sizeBytes / 1024);
+        const maxKB = 3072; // 3 MB localStorage limit
+        const percentUsed = Math.round((sizeKB / maxKB) * 100);
+
+        return {
+            usedKB: sizeKB,
+            maxKB: maxKB,
+            percentUsed: percentUsed,
+            remainingKB: maxKB - sizeKB,
+        };
+    } catch (err) {
+        console.warn('[Storage calc error]', err.message);
+        return { usedKB: 0, maxKB: 3072, percentUsed: 0, remainingKB: 3072 };
+    }
+}
+
+function getStorageColor(percentUsed) {
+    if (percentUsed < 50) return '#10b981';  // green
+    if (percentUsed < 80) return '#f59e0b';  // amber
+    return '#ef4444';                         // red
 }
 
 // ── Share trip (encode key params in URL hash) ─────────────────
@@ -1159,20 +1188,47 @@ function openMyTrips() {
 function renderMyTripsList() {
     const list = document.getElementById('mytrips-list');
     const trips = JSON.parse(localStorage.getItem('atp_saved_trips') || '[]');
-    if (!trips.length) { list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);">No saved trips yet.<br>Plan a trip and click 💾 Save!</div>'; return; }
 
-    list.innerHTML = '';
+    // Calculate storage
+    const storage = calculateStorageUsed();
+    const barColor = getStorageColor(storage.percentUsed);
+
+    // Build list HTML with storage meter at top
+    let html = `
+    <div style="background:var(--bg-elevated);padding:12px 16px;border-radius:10px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text-secondary);">
+            <span>💾 Storage Used</span>
+            <span style="color:${barColor};">${storage.percentUsed}%</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:999px;overflow:hidden;">
+            <div class="storage-bar" style="height:100%;background:linear-gradient(90deg,#10b981,#f59e0b,#ef4444);width:${storage.percentUsed}%;transition:width 0.3s;"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);display:flex;justify-content:space-between;">
+            <span>${storage.usedKB} KB used</span>
+            <span>${storage.remainingKB} KB free</span>
+            <span style="font-weight:600;color:${barColor};">${storage.maxKB} KB max</span>
+        </div>
+    </div>
+    `;
+
+    if (!trips.length) {
+        html += '<div style="padding:20px;text-align:center;color:var(--text-muted);">No saved trips yet.<br>Plan a trip and click 💾 Save!</div>';
+        list.innerHTML = html;
+        return;
+    }
+
+    list.innerHTML = html;
     trips.forEach((trip, idx) => {
         const item = document.createElement('div');
         item.className = 'saved-trip-item';
         const date = new Date(trip.savedAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
         item.innerHTML = `
-          <div style="flex:1;">
+        <div style="flex:1;">
             <div class="saved-trip-name">${trip.locations.join(' + ')}</div>
             <div class="saved-trip-meta">${trip.startDate} → ${trip.endDate} · Saved ${date}</div>
             ${trip.summary ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">${trip.summary.slice(0, 80)}…</div>` : ''}
-          </div>
-          <button class="saved-trip-del" data-idx="${idx}" title="Delete">✕</button>`;
+        </div>
+        <button class="saved-trip-del" data-idx="${idx}" title="Delete">✕</button>`;
 
         // Load this trip
         item.querySelector('.saved-trip-name').addEventListener('click', () => loadSavedTrip(trip));
@@ -1183,7 +1239,7 @@ function renderMyTripsList() {
             e.stopPropagation();
             trips.splice(idx, 1);
             localStorage.setItem('atp_saved_trips', JSON.stringify(trips));
-            renderMyTripsList();
+            renderMyTripsList();  // Re-render to update storage meter
         });
 
         list.appendChild(item);
