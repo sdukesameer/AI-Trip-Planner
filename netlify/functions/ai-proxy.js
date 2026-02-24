@@ -1,7 +1,8 @@
 // netlify/functions/ai-proxy.js
 // Keeps API keys server-side. Frontend calls /.netlify/functions/ai-proxy
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
+    context.callbackWaitsForEmptyEventLoop = false;
     if (event.httpMethod !== 'POST') {
         return { statusCode: 405, body: 'Method Not Allowed' };
     }
@@ -19,7 +20,58 @@ exports.handler = async (event) => {
     const groqKey = process.env.GROQ_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-    // ── TIER 1: Groq - Llama 3.3 70B Versatile (STILL WORKING) ────
+    // Helper to add timeout to any provider call
+    const withTimeout = (promise, ms, name) =>
+        Promise.race([
+            promise,
+            new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(`${name} timed out after ${ms}ms`)), ms)
+            )
+        ]);
+
+    // ── TIER 1: Gemini 2.5 Flash (Current Working Model) ────────
+    async function gemini25Flash(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            }
+        );
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini 2.5 Flash [${res.status}]: ${err}`);
+        }
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
+
+    // ── TIER 1b: Gemini 2.5 Flash Lite (Budget-friendly fallback) ──
+    async function gemini25FlashLite(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            }
+        );
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini 2.5 Flash Lite [${res.status}]: ${err}`);
+        }
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
+
+    // ── TIER 2: Groq - Llama 3.3 70B Versatile (STILL WORKING) ────
     async function groq33Versatile(prompt) {
         if (!groqKey) throw new Error("Groq Key missing");
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -46,7 +98,7 @@ exports.handler = async (event) => {
         return data?.choices?.[0]?.message?.content;
     }
 
-    // ── TIER 1b: Groq - Llama 3.1 8B Instant (Smaller fallback) ───
+    // ── TIER 2b: Groq - Llama 3.1 8B Instant (Smaller fallback) ───
     async function groq31Instant(prompt) {
         if (!groqKey) throw new Error("Groq Key missing");
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -71,48 +123,6 @@ exports.handler = async (event) => {
         }
         const data = await res.json();
         return data?.choices?.[0]?.message?.content;
-    }
-
-    // ── TIER 2: Gemini 2.5 Flash (Current Working Model) ────────
-    async function gemini25Flash(prompt) {
-        if (!geminiKey) throw new Error("Gemini Key missing");
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            }
-        );
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Gemini 2.5 Flash [${res.status}]: ${err}`);
-        }
-        const data = await res.json();
-        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    }
-
-    // ── TIER 2b: Gemini 2.5 Flash Lite (Budget-friendly fallback) ──
-    async function gemini25FlashLite(prompt) {
-        if (!geminiKey) throw new Error("Gemini Key missing");
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            }
-        );
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Gemini 2.5 Flash Lite [${res.status}]: ${err}`);
-        }
-        const data = await res.json();
-        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }
 
     // ── TIER 3: OpenRouter Llama 3.1 8B Free (Ultimate safety net) ─
@@ -163,7 +173,7 @@ exports.handler = async (event) => {
     // Try each provider in order
     for (const provider of providers) {
         try {
-            text = await provider.fn(prompt);
+            text = await withTimeout(provider.fn(prompt), 20000, provider.name);
             if (text) {
                 providerUsed = provider.name;
                 console.log(`[ai-proxy] ✅ Success with ${provider.name}`);

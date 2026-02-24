@@ -860,7 +860,14 @@ async function generateItineraryFlow() {
 
         hideProgress();
 
-    } catch (err) { hideProgress(); showToast('Error generating itinerary: ' + err.message, 'error'); console.error(err); }
+    } catch (err) {
+        hideProgress();
+        const msg = err.message?.includes('timed out') || err.message?.includes('502')
+            ? 'AI is taking longer than usual. Please try again in a moment ⏳'
+            : 'Error generating itinerary: ' + err.message;
+        showToast(msg, 'error');
+        console.error(err);
+    }
 }
 
 // ── Itinerary Screen ──────────────────────────────────────────

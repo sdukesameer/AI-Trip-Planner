@@ -23,7 +23,7 @@ const UNSPLASH_BASE = 'https://api.unsplash.com/search/photos';
 const PROXY_AI = '/.netlify/functions/ai-proxy';
 const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
 
-const REQUEST_TIMEOUT_MS = 45000;
+const REQUEST_TIMEOUT_MS = 25000;
 
 // Detect if we're running behind the Netlify proxy (production) or direct (local dev)
 function isProxied() {
@@ -60,13 +60,14 @@ async function smartAICall(prompt, config, onProviderSwitch) {
 
     // Production: route through serverless proxy so keys stay server-side
     if (isProxied()) {
-        if (onProviderSwitch) onProviderSwitch('Connecting…');
+        if (onProviderSwitch) onProviderSwitch('Connecting to AI…');
         try {
             const data = await callViaProxy(prompt);
             lastProviderUsed = data.providerUsed || 'Unknown';
             if (onProviderSwitch) onProviderSwitch(lastProviderUsed);
             return data.text || '';
         } catch (err) {
+            if (onProviderSwitch) onProviderSwitch('Retrying with fallback…');
             throw new Error('All AI providers failed via proxy:\n' + err.message);
         }
     }
