@@ -14,6 +14,16 @@
 
         <link rel="stylesheet" href="css/style.css">
         <link rel="stylesheet" href="css/components.css">
+
+        <!-- Favicons & PWA -->
+        <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+        <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+        <link rel="manifest" href="manifest.json">
+        <meta name="theme-color" content="#6366f1">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="apple-mobile-web-app-title" content="AI Trip Planner">
     </head>
 
     <body>
@@ -232,9 +242,10 @@
                         <span>Add a Specific Place or Area</span>
                     </div>
                     <div style="display:flex;gap:10px;align-items:center;width:100%;">
-                        <input class="input-field" type="text" id="nearby-input" placeholder="e.g. India Gate, Red Fort, Connaught Place…"
-                            style="flex:1;min-width:0;">
-                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn" style="white-space:nowrap;flex-shrink:0;">🔍
+                        <input class="input-field" type="text" id="nearby-input"
+                            placeholder="e.g. India Gate, Red Fort, Connaught Place…" style="flex:1;min-width:0;">
+                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn"
+                            style="white-space:nowrap;flex-shrink:0;">🔍
                             Search</button>
                     </div>
                     <div id="nearby-results" class="place-card-grid" style="margin-top:12px;"></div>

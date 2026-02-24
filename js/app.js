@@ -5,7 +5,7 @@
 import {
     fetchFamousPlaces, fetchMorePlaces, searchNearbyPlaces,
     fetchPlaceImages, generateItinerary, getLastProvider, picsumFallback,
-    enrichCustomPlaces
+    enrichCustomPlaces, fetchWeatherForDays, weatherEmoji
 } from './api.js';
 import { initMap, plotItinerary, focusDay, focusPlace, resetFocus, setMapTheme } from './maps.js';
 import { downloadAsText, downloadAsPDF, copyToClipboard } from './download.js';
@@ -46,6 +46,7 @@ const state = {
     selectedPlaces: [],
     itinerary: null,
     aiProvider: '',
+    weatherMap: {},   // date → OWM forecast object
     config: { geminiKey: '', groqKey: '', unsplashKey: '' },
 };
 
@@ -95,6 +96,57 @@ function showToast(msg, type = 'info') {
     document.getElementById('toast-container').appendChild(t);
     setTimeout(() => t.classList.add('show'), 10);
     setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 400); }, 3500);
+}
+
+// ── Empty State ───────────────────────────────────────────────
+function showEmptyState(containerId, title, subtitle, retryFn = null) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                    padding:60px 24px;text-align:center;gap:16px;">
+            <div style="font-size:52px;line-height:1;">${title.match(/^\S+/)?.[0] || '⚠️'}</div>
+            <div style="font-family:'Outfit',sans-serif;font-size:20px;font-weight:700;
+                        color:var(--text-primary);">${title.replace(/^\S+\s*/, '')}</div>
+            <div style="font-size:14px;color:var(--text-secondary);max-width:400px;line-height:1.6;">
+                ${subtitle}
+            </div>
+            ${retryFn ? `<button class="btn btn-primary btn-sm" id="empty-state-retry">🔄 Try Again</button>` : ''}
+        </div>`;
+    if (retryFn) {
+        document.getElementById('empty-state-retry')?.addEventListener('click', retryFn);
+    }
+}
+
+// ── Weather Badge Injection ────────────────────────────────────
+function injectWeatherBadges(weatherMap) {
+    document.querySelectorAll('.accordion-item').forEach(item => {
+        const dayIdx = parseInt(item.dataset.day, 10);
+        const day = state.itinerary?.days?.[dayIdx];
+        if (!day) return;
+        const wx = weatherMap[day.date];
+        if (!wx) return;
+
+        // Don't double-inject
+        if (item.querySelector('.weather-badge')) return;
+
+        const emoji = weatherEmoji(wx.icon);
+        const rainStr = wx.pop > 10 ? ` · 🌧️ ${wx.pop}%` : '';
+        const badge = document.createElement('span');
+        badge.className = 'weather-badge';
+        badge.title = `${wx.description} · Humidity ${wx.humidity}% · Wind ${wx.wind_kph} km/h`;
+        badge.innerHTML = `${emoji} ${wx.temp_min}–${wx.temp_max}°C${rainStr}`;
+        badge.style.cssText = [
+            'display:inline-flex;align-items:center;gap:4px;',
+            'background:rgba(6,182,212,0.12);border:1px solid rgba(6,182,212,0.3);',
+            'color:#67e8f9;border-radius:999px;padding:2px 10px;',
+            'font-size:11px;font-weight:500;margin-left:8px;vertical-align:middle;',
+            'cursor:help;white-space:nowrap;'
+        ].join('');
+
+        const titleEl = item.querySelector('.accordion-day-title');
+        if (titleEl) titleEl.appendChild(badge);
+    });
 }
 
 // ── Theme ─────────────────────────────────────────────────────
@@ -254,7 +306,20 @@ function initInputScreen() {
     document.getElementById('start-date').valueAsDate = today;
     document.getElementById('end-date').valueAsDate = plus3;
 
-    document.getElementById('plan-btn').addEventListener('click', startPlanning);
+    let _planningInFlight = false;
+    document.getElementById('plan-btn').addEventListener('click', async () => {
+        if (_planningInFlight) return;
+        _planningInFlight = true;
+        const btn = document.getElementById('plan-btn');
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Planning…';
+        try { await startPlanning(); }
+        finally {
+            _planningInFlight = false;
+            btn.disabled = false;
+            btn.innerHTML = '✈️ Plan My Trip';
+        }
+    });
 
     // Navbar: logo → home
     document.getElementById('home-logo').addEventListener('click', () => showScreen('screen-input'));
@@ -284,6 +349,16 @@ function initInputScreen() {
         // Start collapsed — aria-expanded="false" already set in HTML
         customBody.classList.add('hidden');
     }
+
+    // Delegated commute toggle — CSP-safe, handles dynamically rendered rows
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('[data-commute-toggle]');
+        if (!btn) return;
+        const collapsible = btn.closest('[data-commute-collapsible]');
+        if (!collapsible) return;
+        const isOpen = collapsible.classList.toggle('open');
+        btn.setAttribute('aria-expanded', String(isOpen));
+    });
 
     // Check share link in URL hash
     checkShareLink();
@@ -467,7 +542,18 @@ function renderDiscoveryScreen() {
     });
 
     // Rebind Generate / Back
-    rebind('generate-btn', generateItineraryFlow);
+    let _generatingInFlight = false;
+    rebind('generate-btn', async () => {
+        if (_generatingInFlight) return;
+        _generatingInFlight = true;
+        const gBtn = document.getElementById('generate-btn');
+        if (gBtn) { gBtn.disabled = true; gBtn.innerHTML = '⏳ Building…'; }
+        try { await generateItineraryFlow(); }
+        finally {
+            _generatingInFlight = false;
+            if (gBtn) { gBtn.disabled = false; gBtn.innerHTML = '🧠 Generate Itinerary'; }
+        }
+    });
     rebind('back-to-input', () => showScreen('screen-input'));
 
     // Nearby search
@@ -671,8 +757,39 @@ async function generateItineraryFlow() {
             itin = await generateItinerary(state.config, state.locations, state.startDate, state.endDate, state.autoMode ? state.places : state.selectedPlaces, state.autoMode, onSwitch);
             cacheSet(itinKey, itin);
         }
+        // Guard: validate AI returned a usable structure
+        if (!itin || !Array.isArray(itin.days) || itin.days.length === 0) {
+            hideProgress();
+            showEmptyState('itinerary-accordion',
+                '🤖 AI returned an unexpected response',
+                'The itinerary could not be built. Try again or adjust your destinations.',
+                () => generateItineraryFlow()
+            );
+            showScreen('screen-itinerary');
+            return;
+        }
+
+        // Guard: strip any days with no places array
+        itin.days = itin.days.filter(d => Array.isArray(d.places) && d.places.length > 0);
+        if (itin.days.length === 0) {
+            hideProgress();
+            showEmptyState('itinerary-accordion',
+                '📭 No places found',
+                'AI generated days with no places. Try adding specific places or changing dates.',
+                () => generateItineraryFlow()
+            );
+            showScreen('screen-itinerary');
+            return;
+        }
+
         state.itinerary = itin;
         state.aiProvider = getLastProvider();
+
+        // Fetch weather in background (non-blocking — won't delay render)
+        fetchWeatherForDays(itin.days).then(weatherMap => {
+            state.weatherMap = weatherMap;
+            if (Object.keys(weatherMap).length) injectWeatherBadges(weatherMap);
+        }).catch(() => { /* weather is optional */ });
 
         // Fetch images for itinerary places with location context for accurate thumbnails
         const allPlaceObjs = itin.days.flatMap(d => d.places.map(p => ({ name: p.name, location: d.location || state.locations[0] || '' })));
@@ -784,6 +901,11 @@ function renderItineraryScreen() {
     rebind('share-trip-btn', shareTrip);
     rebind('map-reset-focus', resetFocus);
 
+    // Inject any already-loaded weather (e.g. saved trip reload)
+    if (state.weatherMap && Object.keys(state.weatherMap).length) {
+        setTimeout(() => injectWeatherBadges(state.weatherMap), 50);
+    }
+
     // Legend
     const legend = document.getElementById('day-legend');
     if (legend) {
@@ -812,10 +934,9 @@ function renderPlaceRow(place, pIdx, dayColor, dayIdx) {
         if (commute.cab && commute.cab !== 'N/A') rows.push(`<div class="commute-detail-row"><span class="commute-badge cab">\ud83d\ude95 Cab</span><span class="commute-detail-text">${commute.cab}</span></div>`);
         if (rows.length) {
             const quickest = rows[0].match(/class="commute-detail-text">([^<]+)/)?.[1] || '';
-            const uid = `c-${dayIdx}-${pIdx}`;
             commuteHTML = `
-    <div class="commute-collapsible">
-      <button class="commute-summary-btn" onclick="(function(el){el.closest('.commute-collapsible').classList.toggle('open')})(this)" aria-expanded="false">
+    <div class="commute-collapsible" data-commute-collapsible>
+      <button class="commute-summary-btn" data-commute-toggle aria-expanded="false">
         <span class="commute-arrow">\u2192</span>
         <span class="commute-summary-text">Getting there &middot; ${quickest}</span>
         <span class="commute-chevron">&and;</span>
@@ -898,6 +1019,13 @@ function estimateBudget(itin) {
 // ── Save trip ─────────────────────────────────────────────────
 function saveCurrentTrip() {
     const trips = JSON.parse(localStorage.getItem('atp_saved_trips') || '[]');
+
+    // Strip imageCache of data-URLs and large base64 blobs — keep only http(s) URLs
+    const safeImageCache = {};
+    for (const [k, v] of Object.entries(state.imageCache || {})) {
+        if (typeof v === 'string' && v.startsWith('http')) safeImageCache[k] = v;
+    }
+
     const trip = {
         id: Date.now().toString(),
         savedAt: new Date().toISOString(),
@@ -906,12 +1034,37 @@ function saveCurrentTrip() {
         endDate: state.endDate,
         summary: state.itinerary?.summary || '',
         itinerary: state.itinerary,
-        imageCache: state.imageCache,
+        imageCache: safeImageCache,   // only safe URLs, no base64
     };
+
     trips.unshift(trip);
-    const trimmed = trips.slice(0, 5); // max 5 saved
-    localStorage.setItem('atp_saved_trips', JSON.stringify(trimmed));
-    showToast('Trip saved! 💾', 'success');
+    const trimmed = trips.slice(0, 5);
+    const serialized = JSON.stringify(trimmed);
+
+    // Guard: localStorage limit is ~5 MB; warn if we're approaching it
+    const sizeKB = Math.round((serialized.length * 2) / 1024); // UTF-16 = 2 bytes/char
+    if (sizeKB > 4500) {
+        // Try saving without oldest trip
+        const smaller = JSON.stringify(trimmed.slice(0, -1));
+        if (smaller.length * 2 / 1024 < 4500) {
+            localStorage.setItem('atp_saved_trips', smaller);
+            showToast('Trip saved (oldest removed to free space) 💾', 'success');
+            return;
+        }
+        showToast('Storage nearly full — delete old trips first', 'error');
+        return;
+    }
+
+    try {
+        localStorage.setItem('atp_saved_trips', serialized);
+        showToast(`Trip saved! 💾 (~${sizeKB} KB used)`, 'success');
+    } catch (e) {
+        if (e.name === 'QuotaExceededError') {
+            showToast('Storage full! Delete old trips from My Trips 🗑️', 'error');
+        } else {
+            showToast('Could not save trip: ' + e.message, 'error');
+        }
+    }
 }
 
 // ── Share trip (encode key params in URL hash) ─────────────────

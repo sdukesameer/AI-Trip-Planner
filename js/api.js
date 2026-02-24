@@ -13,15 +13,62 @@ const AI_PROVIDERS = [
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 const UNSPLASH_BASE = 'https://api.unsplash.com/search/photos';
+const PROXY_AI = '/.netlify/functions/ai-proxy';
+const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
 
 const REQUEST_TIMEOUT_MS = 45000;
+
+// Detect if we're running behind the Netlify proxy (production) or direct (local dev)
+function isProxied() {
+    return window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+}
 
 let lastProviderUsed = '';
 export function getLastProvider() { return lastProviderUsed; }
 
+// ── Proxied AI call (production) ─────────────────────────────
+async function callViaProxy(provider, model, prompt) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        const res = await fetch(PROXY_AI, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, model, prompt }),
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            const msg = await res.text().catch(() => `HTTP ${res.status}`);
+            throw new Error(msg);
+        }
+        const data = await res.json();
+        return data.text || '';
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 // ── Core: Smart AI Call with Fallback ────────────────────────
 async function smartAICall(prompt, config, onProviderSwitch) {
     const errors = [];
+
+    // Production: route through serverless proxy so keys stay server-side
+    if (isProxied()) {
+        for (const provider of AI_PROVIDERS) {
+            if (onProviderSwitch) onProviderSwitch(provider.name);
+            try {
+                const text = await callViaProxy(provider.type, provider.model, prompt);
+                lastProviderUsed = provider.name;
+                return text;
+            } catch (err) {
+                console.warn(`[proxy:${provider.name}] failed:`, err.message);
+                errors.push(`${provider.name}: ${err.message}`);
+            }
+        }
+        throw new Error('All AI providers failed:\n' + errors.join('\n'));
+    }
+
+    // Local dev: call APIs directly using keys from env.js
     for (const provider of AI_PROVIDERS) {
         if (provider.type === 'groq' && !config.groqKey) continue;
         if (provider.type === 'gemini' && !config.geminiKey) continue;
@@ -192,7 +239,7 @@ Return ONLY valid JSON array, no explanation.`;
 export async function fetchPlaceImages(placeItems, unsplashKey) {
     const items = placeItems.map(p => typeof p === 'string' ? { name: p, location: '' } : p);
     const cache = {};
-    const hasKey = unsplashKey && unsplashKey.length > 10;
+    const hasKey = isProxied() || (unsplashKey && unsplashKey.length > 10);
 
     if (!hasKey) {
         for (const { name } of items) cache[name] = picsumFallback(name);
@@ -213,7 +260,12 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
             const fallbackQuery = cleanName;
 
             const tryFetch = async (query) => {
-                const url = `${UNSPLASH_BASE}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&client_id=${unsplashKey}`;
+                let url;
+                if (isProxied()) {
+                    url = `${PROXY_IMAGES}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape`;
+                } else {
+                    url = `${UNSPLASH_BASE}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&client_id=${unsplashKey}`;
+                }
                 const res = await fetch(url);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
@@ -401,6 +453,58 @@ For each place return: { "name": "<exact name as given>", "shortDesc": "<1 engag
 Return ONLY a valid JSON array. No explanation, no markdown.`;
     const text = await smartAICall(prompt, config, onProviderSwitch);
     return extractJSON(text);
+}
+
+// ── Weather API ───────────────────────────────────────────────
+const _weatherCache = new Map();
+
+export async function fetchWeatherForDays(days) {
+    // OWM free forecast only covers 5 days from today — skip beyond that
+    const today = new Date();
+    const cutoff = new Date(today);
+    cutoff.setDate(today.getDate() + 5);
+
+    const results = {};    // date string → weather object
+
+    // Group days by city to minimise API calls
+    const cityDates = {};
+    days.forEach(day => {
+        if (!day.location || !day.date) return;
+        const dayDate = new Date(day.date);
+        if (dayDate > cutoff) return;   // beyond free forecast window
+        (cityDates[day.location] = cityDates[day.location] || []).push(day.date);
+    });
+
+    await Promise.all(Object.entries(cityDates).map(async ([city, dates]) => {
+        const cacheKey = `wx_${city}`;
+        let forecasts = _weatherCache.get(cacheKey);
+
+        if (!forecasts) {
+            try {
+                const res = await fetch(`/.netlify/functions/weather-proxy?city=${encodeURIComponent(city)}`);
+                if (!res.ok) return;
+                forecasts = await res.json();
+                _weatherCache.set(cacheKey, forecasts);
+            } catch { return; }
+        }
+
+        dates.forEach(date => {
+            const match = (forecasts || []).find(f => f.date === date);
+            if (match) results[date] = match;
+        });
+    }));
+
+    return results;
+}
+
+// Map OWM icon code to emoji
+export function weatherEmoji(icon = '') {
+    const code = icon.slice(0, 2);
+    const map = {
+        '01': '☀️', '02': '🌤️', '03': '🌥️', '04': '☁️',
+        '09': '🌧️', '10': '🌦️', '11': '⛈️', '13': '❄️', '50': '🌫️',
+    };
+    return map[code] || '🌡️';
 }
 
 // ── Helpers ───────────────────────────────────────────────────
