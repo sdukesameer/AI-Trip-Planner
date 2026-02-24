@@ -19,47 +19,8 @@ exports.handler = async (event) => {
     const groqKey = process.env.GROQ_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-    async function geminiFlash(prompt) {
-        if (!geminiKey) throw new Error("Gemini Key missing");
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            }
-        );
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Gemini Flash [${res.status}]: ${err}`);
-        }
-        const data = await res.json();
-        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    }
-
-    async function geminiPro(prompt) {
-        if (!geminiKey) throw new Error("Gemini Key missing");
-        const res = await fetch(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${geminiKey}`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            }
-        );
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Gemini Pro [${res.status}]: ${err}`);
-        }
-        const data = await res.json();
-        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    }
-
-    async function groq(prompt) {
+    // ── TIER 1: Groq - Llama 3.3 70B Versatile (STILL WORKING) ────
+    async function groq33Versatile(prompt) {
         if (!groqKey) throw new Error("Groq Key missing");
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
@@ -68,22 +29,94 @@ exports.handler = async (event) => {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "llama3-70b-8192",
+                model: "llama-3.3-70b-versatile",
                 messages: [
                     { role: "system", content: "You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation." },
                     { role: "user", content: prompt }
-                ]
+                ],
+                temperature: 0.7,
+                max_tokens: 8192
             })
         });
         if (!res.ok) {
             const err = await res.text();
-            throw new Error(`Groq [${res.status}]: ${err}`);
+            throw new Error(`Groq Llama 3.3 70B [${res.status}]: ${err}`);
         }
         const data = await res.json();
         return data?.choices?.[0]?.message?.content;
     }
 
-    async function openrouter(prompt) {
+    // ── TIER 1b: Groq - Llama 3.1 8B Instant (Smaller fallback) ───
+    async function groq31Instant(prompt) {
+        if (!groqKey) throw new Error("Groq Key missing");
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${groqKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "llama-3.1-8b-instant",
+                messages: [
+                    { role: "system", content: "You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation." },
+                    { role: "user", content: prompt }
+                ],
+                temperature: 0.7,
+                max_tokens: 8192
+            })
+        });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Groq Llama 3.1 8B [${res.status}]: ${err}`);
+        }
+        const data = await res.json();
+        return data?.choices?.[0]?.message?.content;
+    }
+
+    // ── TIER 2: Gemini 2.5 Flash (Current Working Model) ────────
+    async function gemini25Flash(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            }
+        );
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini 2.5 Flash [${res.status}]: ${err}`);
+        }
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
+
+    // ── TIER 2b: Gemini 2.5 Flash Lite (Budget-friendly fallback) ──
+    async function gemini25FlashLite(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            }
+        );
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini 2.5 Flash Lite [${res.status}]: ${err}`);
+        }
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
+
+    // ── TIER 3: OpenRouter Llama 3.1 8B Free (Ultimate safety net) ─
+    async function openrouterFree(prompt) {
         if (!openrouterKey) throw new Error("OpenRouter Key missing");
         const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
@@ -92,11 +125,13 @@ exports.handler = async (event) => {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "mistralai/mistral-7b-instruct:free",
+                model: "meta-llama/llama-3.1-8b-instruct:free",
                 messages: [
                     { role: "system", content: "You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation." },
                     { role: "user", content: prompt }
-                ]
+                ],
+                temperature: 0.7,
+                max_tokens: 8192
             })
         });
         if (!res.ok) {
@@ -107,32 +142,47 @@ exports.handler = async (event) => {
         return data?.choices?.[0]?.message?.content;
     }
 
+    // ── Provider fallback chain (BEST → GOOD → FALLBACK) ──────────
     const providers = [
-        { name: 'Gemini Flash', fn: geminiFlash },
-        { name: 'Gemini Pro', fn: geminiPro },
-        { name: 'Groq', fn: groq },
-        { name: 'OpenRouter', fn: openrouter }
+        // TIER 1: Groq (Fast)
+        { name: 'Llama 3.3 70B Versatile (Groq)', fn: groq33Versatile },
+        { name: 'Llama 3.1 8B Instant (Groq)', fn: groq31Instant },
+
+        // TIER 2: Google Gemini (High Quality)
+        { name: 'Gemini 2.5 Flash', fn: gemini25Flash },
+        { name: 'Gemini 2.5 Flash Lite', fn: gemini25FlashLite },
+
+        // TIER 3: OpenRouter (Ultimate safety net)
+        { name: 'OpenRouter Llama 3.1 8B Free', fn: openrouterFree },
     ];
 
     let text = null;
     let providerUsed = null;
     let errorDetails = [];
 
+    // Try each provider in order
     for (const provider of providers) {
         try {
             text = await provider.fn(prompt);
             if (text) {
                 providerUsed = provider.name;
+                console.log(`[ai-proxy] ✅ Success with ${provider.name}`);
                 break;
             }
         } catch (err) {
-            console.warn(`[Proxy Fallback] ${provider.name} failed:`, err.message);
-            errorDetails.push(err.message);
+            console.warn(`[ai-proxy] ❌ ${provider.name} failed:`, err.message);
+            errorDetails.push(`${provider.name}: ${err.message}`);
         }
     }
 
+    // Return success or fail
     if (!text) {
-        return { statusCode: 500, body: 'All AI providers failed:\n' + errorDetails.join('\n') };
+        const errorMsg = errorDetails.join('\n');
+        console.error('[ai-proxy] ❌ All providers failed:\n', errorMsg);
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: 'All AI providers failed', details: errorMsg })
+        };
     }
 
     return {

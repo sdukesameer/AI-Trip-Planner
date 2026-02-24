@@ -1,16 +1,22 @@
 // ============================================================
 //  api.js — AI provider abstraction with fallback chain
-// ============================================================
+\// ============================================================
 
-// ── AI Provider Definitions ───────────────────────────────────
+// ── AI Provider Definitions (CURRENT WORKING MODELS) ──────────────
 const AI_PROVIDERS = [
-    { name: 'Gemini Flash', model: 'gemini-1.5-flash', type: 'gemini' },
-    { name: 'Gemini Pro', model: 'gemini-1.5-pro', type: 'gemini' },
-    { name: 'Groq', model: 'llama3-70b-8192', type: 'groq' },
-    { name: 'OpenRouter', model: 'mistralai/mistral-7b-instruct:free', type: 'openrouter' },
+    // TIER 1: Groq (Fastest - Llama 3.3 70B - STILL WORKING)
+    { name: 'Llama 3.3 70B Versatile (Groq)', model: 'llama-3.3-70b-versatile', type: 'groq' },
+    { name: 'Llama 3.1 8B Instant (Groq)', model: 'llama-3.1-8b-instant', type: 'groq' },
+
+    // TIER 2: Google Gemini (High Quality - Current Working Models)
+    { name: 'Gemini 2.5 Flash', model: 'gemini-2.5-flash', type: 'gemini' },
+    { name: 'Gemini 2.5 Flash Lite', model: 'gemini-2.5-flash-lite', type: 'gemini' },
+
+    // TIER 3: OpenRouter (Ultimate safety net)
+    { name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' },
 ];
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1/models';
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1/chat/completions';
 const UNSPLASH_BASE = 'https://api.unsplash.com/search/photos';
@@ -53,7 +59,6 @@ async function smartAICall(prompt, config, onProviderSwitch) {
     const errors = [];
 
     // Production: route through serverless proxy so keys stay server-side
-    // The serverless proxy implements the 4-tier fallback loop.
     if (isProxied()) {
         if (onProviderSwitch) onProviderSwitch('Proxy (Auto-Fallback)');
         try {
@@ -91,7 +96,7 @@ async function smartAICall(prompt, config, onProviderSwitch) {
     throw new Error('All AI providers failed:\n' + errors.join('\n'));
 }
 
-// ── Gemini API Call ──────────────────────────────────────────
+// ── Gemini API Call (v1beta with working models) ───────────────
 async function callGemini(apiKey, model, prompt) {
     const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
     const body = {
@@ -117,7 +122,7 @@ async function callGemini(apiKey, model, prompt) {
     }
 }
 
-// ── Groq API Call ────────────────────────────────────────────
+// ── Groq API Call (Llama 3.3 70B Versatile & Llama 3.1 8B) ─────
 async function callGroq(apiKey, model, prompt) {
     const body = {
         model,
@@ -151,7 +156,7 @@ async function callGroq(apiKey, model, prompt) {
     }
 }
 
-// ── OpenRouter API Call ──────────────────────────────────────
+// ── OpenRouter API Call (Llama 3.1 8B Instruct Free) ──────────
 async function callOpenRouter(apiKey, model, prompt) {
     const body = {
         model,
@@ -159,6 +164,8 @@ async function callOpenRouter(apiKey, model, prompt) {
             { role: 'system', content: 'You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation.' },
             { role: 'user', content: prompt }
         ],
+        temperature: 0.7,
+        max_tokens: 8192,
     };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -233,7 +240,7 @@ Return ONLY valid JSON array, no explanation, no markdown.`;
 export async function fetchMorePlaces(config, location, existingNames, onProviderSwitch) {
     const exclude = existingNames.slice(0, 20).join(', ');
     const prompt = `You are a travel expert. List 6 more famous tourist places in ${location} that are NOT already in this list: [${exclude}].
-Sort by popularity. Each item: { "location": "${location}", "name": "<name>", "shortDesc": "<1 sentence>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>" }
+Sort by popularity. Each item: { "location": "${location}", "name": "<n>", "shortDesc": "<1 sentence>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>" }
 Return ONLY valid JSON array, no explanation.`;
     const text = await smartAICall(prompt, config, onProviderSwitch);
     return extractJSON(text);
@@ -241,7 +248,6 @@ Return ONLY valid JSON array, no explanation.`;
 
 // ── API Call 1c: Search Nearby Places ────────────────────────
 export async function searchNearbyPlaces(config, query, onProviderSwitch) {
-    // Geocode via Nominatim first
     const geoUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1`;
     let locationLabel = query;
     let coordsLine = '';
@@ -257,13 +263,12 @@ export async function searchNearbyPlaces(config, query, onProviderSwitch) {
                 coordsLine = `Coordinates: ${parseFloat(lat).toFixed(4)}, ${parseFloat(lon).toFixed(4)}.`;
             }
         }
-    } catch { /* ignore geocode errors — AI will do its best */ }
+    } catch { /* ignore geocode errors */ }
 
     const prompt = `You are a travel expert. List 6 famous tourist attractions near or in "${locationLabel}". ${coordsLine}
 Each item: { "location": "<area or city>", "name": "<place name>", "shortDesc": "<1 sentence description>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>" }
 Return ONLY valid JSON array, no explanation.`;
 
-    // Implement a timeout to prevent hanging searches
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -278,7 +283,6 @@ Return ONLY valid JSON array, no explanation.`;
 }
 
 // ── API Call 2: Fetch Unsplash Images ────────────────────────
-// placeItems: string[] OR {name, location}[] — location improves query accuracy
 export async function fetchPlaceImages(placeItems, unsplashKey) {
     const items = placeItems.map(p => typeof p === 'string' ? { name: p, location: '' } : p);
     const cache = {};
@@ -292,13 +296,11 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
     for (const { name, location } of items) {
         try {
             const cleanName = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
-            // Extract just the city from location (drop country/state noise)
             const cityOnly = (location || '')
                 .split(',')[0]
                 .replace(/[^a-zA-Z0-9 ]/g, '')
                 .trim();
 
-            // Strategy: try specific query first (place + city), fall back to place-only
             const specificQuery = [cleanName, cityOnly].filter(Boolean).join(' ');
             const fallbackQuery = cleanName;
 
@@ -315,15 +317,11 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
                 return data.results || [];
             };
 
-            // Fetch with specific query (name + city)
             let results = await tryFetch(specificQuery);
-
-            // If no results or suspiciously generic, retry with name only
             if (!results.length) {
                 results = await tryFetch(fallbackQuery);
             }
 
-            // Pick best result: prefer photos whose description/alt contains place name keywords
             const nameWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 3);
             const scored = results.map(r => {
                 const haystack = [
@@ -403,8 +401,6 @@ async function generateItineraryChunk(config, locations, startDate, endDate, sel
         d.setDate(d.getDate() + 1);
     }
 
-    // ── Build a geographic-cluster hint so the AI understands the area structure ──
-    // We pass known lat/lng from selectedPlaces to help the AI cluster correctly
     const placeCoords = selectedPlaces
         .filter(p => p.lat && p.lng)
         .map(p => `  ${p.name} @ (${p.lat.toFixed(3)},${p.lng.toFixed(3)})`)
@@ -491,7 +487,6 @@ FORMAT (follow exactly):
     return extractJSON(text);
 }
 
-// ── API Call: Enrich custom place names with descriptions ─────
 export async function enrichCustomPlaces(config, placeNames, locationHint, onProviderSwitch) {
     if (!placeNames.length) return [];
     const prompt = `You are a travel expert. For each of the following places, return a JSON array with a short description and category.
@@ -508,19 +503,17 @@ Return ONLY a valid JSON array. No explanation, no markdown.`;
 const _weatherCache = new Map();
 
 export async function fetchWeatherForDays(days) {
-    // OWM free forecast only covers 5 days from today — skip beyond that
     const today = new Date();
     const cutoff = new Date(today);
     cutoff.setDate(today.getDate() + 5);
 
-    const results = {};    // date string → weather object
+    const results = {};
 
-    // Group days by city to minimise API calls
     const cityDates = {};
     days.forEach(day => {
         if (!day.location || !day.date) return;
         const dayDate = new Date(day.date);
-        if (dayDate > cutoff) return;   // beyond free forecast window
+        if (dayDate > cutoff) return;
         (cityDates[day.location] = cityDates[day.location] || []).push(day.date);
     });
 
@@ -546,7 +539,6 @@ export async function fetchWeatherForDays(days) {
     return results;
 }
 
-// Map OWM icon code to emoji
 export function weatherEmoji(icon = '') {
     const code = icon.slice(0, 2);
     const map = {
