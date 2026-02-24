@@ -23,7 +23,8 @@ const UNSPLASH_BASE = 'https://api.unsplash.com/search/photos';
 const PROXY_AI = '/.netlify/functions/ai-proxy';
 const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
 
-const REQUEST_TIMEOUT_MS = 25000;
+const REQUEST_TIMEOUT_MS = 25000;       // direct provider calls (local dev)
+const PROXY_TIMEOUT_MS = 80000;       // proxy call (production) — proxy handles its own 20s per provider
 
 // Detect if we're running behind the Netlify proxy (production) or direct (local dev)
 function isProxied() {
@@ -36,7 +37,7 @@ export function getLastProvider() { return lastProviderUsed; }
 // ── Proxied AI call (production) ─────────────────────────────
 async function callViaProxy(prompt) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
     try {
         const res = await fetch(PROXY_AI, {
             method: 'POST',
