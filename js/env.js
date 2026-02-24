@@ -5,6 +5,9 @@ export const ENV_KEYS = {
     // Optional: Only used if Gemini fails. Get a free key at https://console.groq.com/keys
     groqKey: 'PASTE_YOUR_GROQ_KEY_HERE',
 
+    // Optional: Only used if Gemini and Groq both fail. Get a free key at https://openrouter.ai/dashboard/apikeys
+    openrouterKey: 'PASTE_YOUR_OPENROUTER_KEY_HERE',
+
     // Optional: Used to fetch high-quality place photos. Get a free key at https://unsplash.com/developers (50 req/hr free).
     // If empty, the app falls back to placeholder SVG images automatically.
     unsplashKey: 'PASTE_YOUR_UNSPLASH_KEY_HERE',

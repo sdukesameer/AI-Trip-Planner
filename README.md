@@ -47,7 +47,7 @@ Users can:
 
 | Feature | Description |
 |---|---|
-| 🤖 Multi-provider AI | Gemini 2.0 Flash → Gemini 2.0 Flash-Lite → Groq Llama → Groq Mixtral (auto-fallback) |
+| 🤖 Multi-provider AI | Gemini Flash → Gemini Pro → Groq → OpenRouter (auto-fallback) |
 | 🗺️ Interactive Map | Leaflet + OpenStreetMap: pin-drop markers, day-focus, polyline routes, popups with images |
 | 🌤️ Daily Weather | OpenWeatherMap integration showing daily forecast for each destination (Optional) |
 | 📅 Realistic Scheduling | Day starts 10 AM, places ordered by `arrivalTime` with actual visit durations |
@@ -71,8 +71,9 @@ Users can:
 | Core | Vanilla HTML5, JavaScript ES Modules |
 | Styling | Vanilla CSS (CSS custom properties, no build step) |
 | Maps | [Leaflet.js](https://leafletjs.com/) 1.9 + CartoDB tiles |
-| AI (primary) | [Google Gemini API](https://ai.google.dev/) — `gemini-2.0-flash` |
-| AI (fallback) | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| AI (primary) | [Google Gemini API](https://ai.google.dev/) — `gemini-1.5-flash`, `gemini-1.5-pro` |
+| AI (fallback) | [Groq API](https://groq.com/) — `llama3-70b-8192` |
+| AI (safety net) | [OpenRouter API](https://openrouter.ai/) — `mistralai/mistral-7b-instruct:free` |
 | Images | [Unsplash API](https://unsplash.com/developers) |
 | Weather | [OpenWeatherMap API](https://openweathermap.org/api) |
 | Geocoding | [Photon API](https://photon.komoot.io/) (OpenStreetMap-backed, no key required) |
@@ -179,7 +180,7 @@ interface AppState {
   selectedPlaces: Place[];
   itinerary:     Itinerary | null;
   aiProvider:    string;      // Last AI that responded
-  config:        { geminiKey: string; groqKey: string; unsplashKey: string };
+  config:        { geminiKey: string; groqKey: string; openrouterKey: string; unsplashKey: string };
 }
 ```
 
@@ -188,16 +189,22 @@ interface AppState {
 ## API Integrations
 
 ### Google Gemini
-- **Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **Models (priority order):** `gemini-2.0-flash` → `gemini-2.0-flash-lite`
+- **Endpoint:** `https://generativelanguage.googleapis.com/v1/models/{model}:generateContent`
+- **Models (priority order):** `gemini-1.5-flash` → `gemini-1.5-pro`
 - **Used for:** Famous place discovery, itinerary generation, nearby search
 - **Rate limits:** Free tier ~15 RPM / 1M TPD; handled via multi-provider fallback
 
 ### Groq
 - **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
-- **Models:** `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`
-- **Used for:** Fallback when Gemini quota is exhausted
+- **Models:** `llama3-70b-8192`
+- **Used for:** Fast fallback when Gemini quota is exhausted
 - **Rate limits:** Free tier generous; recommended primary for local testing
+
+### OpenRouter
+- **Endpoint:** `https://openrouter.ai/api/v1/chat/completions`
+- **Models:** `mistralai/mistral-7b-instruct:free`
+- **Used for:** Final safety net when all other APIs fail
+- **Rate limits:** Free routing to high availability models
 
 ### Unsplash
 - **Endpoint:** `https://api.unsplash.com/search/photos`
@@ -224,6 +231,7 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 |---|---|---|
 | `GEMINI_API_KEY` | Google AI Studio API key | Recommended |
 | `GROQ_API_KEY` | Groq Cloud API key | Recommended |
+| `OPENROUTER_API_KEY` | OpenRouter API key | Recommended |
 | `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | Optional (Picsum fallback) |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap API key | Optional (fails gracefully) |
 
@@ -235,6 +243,7 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 |---|---|---|
 | Gemini | https://aistudio.google.com/apikey | ✅ Yes |
 | Groq | https://console.groq.com/keys | ✅ Yes |
+| OpenRouter | https://openrouter.ai/keys | ✅ Yes |
 | Unsplash | https://unsplash.com/developers | ✅ 50 req/hr |
 | OpenWeatherMap | https://openweathermap.org/api | ✅ 1,000 req/day |
 

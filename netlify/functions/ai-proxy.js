@@ -1,9 +1,6 @@
 // netlify/functions/ai-proxy.js
 // Keeps API keys server-side. Frontend calls /.netlify/functions/ai-proxy
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
-
 exports.handler = async (event) => {
     if (event.httpMethod !== 'POST') {
         return { statusCode: 405, body: 'Method Not Allowed' };
@@ -13,72 +10,122 @@ exports.handler = async (event) => {
     try { body = JSON.parse(event.body); }
     catch { return { statusCode: 400, body: 'Invalid JSON' }; }
 
-    const { provider, model, prompt } = body;
-    if (!provider || !model || !prompt) {
-        return { statusCode: 400, body: 'Missing provider, model, or prompt' };
+    const { prompt } = body;
+    if (!prompt) {
+        return { statusCode: 400, body: 'Missing prompt' };
     }
 
-    try {
-        let text = '';
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const groqKey = process.env.GROQ_API_KEY;
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-        if (provider === 'gemini') {
-            const key = process.env.GEMINI_API_KEY;
-            if (!key) return { statusCode: 503, body: 'Gemini not configured' };
-
-            const url = `${GEMINI_BASE}/${model}:generateContent?key=${key}`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+    async function geminiFlash(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
-                }),
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                return { statusCode: res.status, body: err.error?.message || `HTTP ${res.status}` };
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
             }
-            const data = await res.json();
-            text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        );
+        if (!res.ok) throw new Error("Gemini Flash failed");
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
 
-        } else if (provider === 'groq') {
-            const key = process.env.GROQ_API_KEY;
-            if (!key) return { statusCode: 503, body: 'Groq not configured' };
-
-            const res = await fetch(GROQ_BASE, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${key}`,
-                },
+    async function geminiPro(prompt) {
+        if (!geminiKey) throw new Error("Gemini Key missing");
+        const res = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=${geminiKey}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    model,
-                    messages: [
-                        { role: 'system', content: 'You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation.' },
-                        { role: 'user', content: prompt },
-                    ],
-                    temperature: 0.7,
-                    max_tokens: 8192,
-                }),
-            });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                return { statusCode: res.status, body: err.error?.message || `HTTP ${res.status}` };
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
             }
-            const data = await res.json();
-            text = data.choices?.[0]?.message?.content || '';
+        );
+        if (!res.ok) throw new Error("Gemini Pro failed");
+        const data = await res.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
 
-        } else {
-            return { statusCode: 400, body: 'Unknown provider' };
+    async function groq(prompt) {
+        if (!groqKey) throw new Error("Groq Key missing");
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${groqKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "llama3-70b-8192",
+                messages: [
+                    { role: "system", content: "You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation." },
+                    { role: "user", content: prompt }
+                ]
+            })
+        });
+        if (!res.ok) throw new Error("Groq failed");
+        const data = await res.json();
+        return data?.choices?.[0]?.message?.content;
+    }
+
+    async function openrouter(prompt) {
+        if (!openrouterKey) throw new Error("OpenRouter Key missing");
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${openrouterKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "mistralai/mistral-7b-instruct:free",
+                messages: [
+                    { role: "system", content: "You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation." },
+                    { role: "user", content: prompt }
+                ]
+            })
+        });
+        if (!res.ok) throw new Error("OpenRouter failed");
+        const data = await res.json();
+        return data?.choices?.[0]?.message?.content;
+    }
+
+    const providers = [
+        { name: 'Gemini Flash', fn: geminiFlash },
+        { name: 'Gemini Pro', fn: geminiPro },
+        { name: 'Groq', fn: groq },
+        { name: 'OpenRouter', fn: openrouter }
+    ];
+
+    let text = null;
+    let providerUsed = null;
+    let lastError = null;
+
+    for (const provider of providers) {
+        try {
+            text = await provider.fn(prompt);
+            if (text) {
+                providerUsed = provider.name;
+                break;
+            }
+        } catch (err) {
+            console.warn(`[Proxy Fallback] ${provider.name} failed:`, err.message);
+            lastError = err;
         }
-
-        return {
-            statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-        };
-
-    } catch (err) {
-        return { statusCode: 500, body: err.message };
     }
+
+    if (!text) {
+        return { statusCode: 500, body: 'All AI providers failed: ' + (lastError?.message || 'Unknown error') };
+    }
+
+    return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, providerUsed }),
+    };
 };

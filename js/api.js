@@ -4,14 +4,15 @@
 
 // ── AI Provider Definitions ───────────────────────────────────
 const AI_PROVIDERS = [
-    { name: 'Gemini 2.0 Flash', model: 'gemini-2.0-flash', type: 'gemini' },
-    { name: 'Gemini 2.0 Flash-Lite', model: 'gemini-2.0-flash-lite', type: 'gemini' },
-    { name: 'Groq Llama 3.3', model: 'llama-3.3-70b-versatile', type: 'groq' },
-    { name: 'Groq Mixtral', model: 'mixtral-8x7b-32768', type: 'groq' },
+    { name: 'Gemini Flash', model: 'gemini-1.5-flash', type: 'gemini' },
+    { name: 'Gemini Pro', model: 'gemini-1.5-pro', type: 'gemini' },
+    { name: 'Groq', model: 'llama3-70b-8192', type: 'groq' },
+    { name: 'OpenRouter', model: 'mistralai/mistral-7b-instruct:free', type: 'openrouter' },
 ];
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1/models';
 const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
+const OPENROUTER_BASE = 'https://openrouter.ai/api/v1/chat/completions';
 const UNSPLASH_BASE = 'https://api.unsplash.com/search/photos';
 const PROXY_AI = '/.netlify/functions/ai-proxy';
 const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
@@ -27,22 +28,21 @@ let lastProviderUsed = '';
 export function getLastProvider() { return lastProviderUsed; }
 
 // ── Proxied AI call (production) ─────────────────────────────
-async function callViaProxy(provider, model, prompt) {
+async function callViaProxy(prompt) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
         const res = await fetch(PROXY_AI, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider, model, prompt }),
+            body: JSON.stringify({ prompt }),
             signal: controller.signal,
         });
         if (!res.ok) {
             const msg = await res.text().catch(() => `HTTP ${res.status}`);
             throw new Error(msg);
         }
-        const data = await res.json();
-        return data.text || '';
+        return await res.json();
     } finally {
         clearTimeout(timeout);
     }
@@ -53,25 +53,24 @@ async function smartAICall(prompt, config, onProviderSwitch) {
     const errors = [];
 
     // Production: route through serverless proxy so keys stay server-side
+    // The serverless proxy implements the 4-tier fallback loop.
     if (isProxied()) {
-        for (const provider of AI_PROVIDERS) {
-            if (onProviderSwitch) onProviderSwitch(provider.name);
-            try {
-                const text = await callViaProxy(provider.type, provider.model, prompt);
-                lastProviderUsed = provider.name;
-                return text;
-            } catch (err) {
-                console.warn(`[proxy:${provider.name}] failed:`, err.message);
-                errors.push(`${provider.name}: ${err.message}`);
-            }
+        if (onProviderSwitch) onProviderSwitch('Proxy (Auto-Fallback)');
+        try {
+            const data = await callViaProxy(prompt);
+            lastProviderUsed = data.providerUsed || 'Proxy (Auto-Fallback)';
+            return data.text || '';
+        } catch (err) {
+            throw new Error('All AI providers failed via proxy:\n' + err.message);
         }
-        throw new Error('All AI providers failed:\n' + errors.join('\n'));
     }
 
     // Local dev: call APIs directly using keys from env.js
     for (const provider of AI_PROVIDERS) {
         if (provider.type === 'groq' && !config.groqKey) continue;
         if (provider.type === 'gemini' && !config.geminiKey) continue;
+        if (provider.type === 'openrouter' && !config.openrouterKey) continue;
+
         if (onProviderSwitch) onProviderSwitch(provider.name);
         try {
             let text;
@@ -79,6 +78,8 @@ async function smartAICall(prompt, config, onProviderSwitch) {
                 text = await callGemini(config.geminiKey, provider.model, prompt);
             } else if (provider.type === 'groq') {
                 text = await callGroq(config.groqKey, provider.model, prompt);
+            } else if (provider.type === 'openrouter') {
+                text = await callOpenRouter(config.openrouterKey, provider.model, prompt);
             }
             lastProviderUsed = provider.name;
             return text;
@@ -94,8 +95,7 @@ async function smartAICall(prompt, config, onProviderSwitch) {
 async function callGemini(apiKey, model, prompt) {
     const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
     const body = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
+        contents: [{ parts: [{ text: prompt }] }]
     };
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -132,6 +132,38 @@ async function callGroq(apiKey, model, prompt) {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
         const res = await fetch(GROQ_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error?.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        return data.choices?.[0]?.message?.content || '';
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+// ── OpenRouter API Call ──────────────────────────────────────
+async function callOpenRouter(apiKey, model, prompt) {
+    const body = {
+        model,
+        messages: [
+            { role: 'system', content: 'You are an expert travel planner. Always respond with valid JSON only, no markdown fences, no explanation.' },
+            { role: 'user', content: prompt }
+        ],
+    };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+        const res = await fetch(OPENROUTER_BASE, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
