@@ -31,7 +31,10 @@ exports.handler = async (event) => {
                 })
             }
         );
-        if (!res.ok) throw new Error("Gemini Flash failed");
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini Flash [${res.status}]: ${err}`);
+        }
         const data = await res.json();
         return data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }
@@ -48,7 +51,10 @@ exports.handler = async (event) => {
                 })
             }
         );
-        if (!res.ok) throw new Error("Gemini Pro failed");
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Gemini Pro [${res.status}]: ${err}`);
+        }
         const data = await res.json();
         return data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }
@@ -69,7 +75,10 @@ exports.handler = async (event) => {
                 ]
             })
         });
-        if (!res.ok) throw new Error("Groq failed");
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`Groq [${res.status}]: ${err}`);
+        }
         const data = await res.json();
         return data?.choices?.[0]?.message?.content;
     }
@@ -90,7 +99,10 @@ exports.handler = async (event) => {
                 ]
             })
         });
-        if (!res.ok) throw new Error("OpenRouter failed");
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(`OpenRouter [${res.status}]: ${err}`);
+        }
         const data = await res.json();
         return data?.choices?.[0]?.message?.content;
     }
@@ -104,7 +116,7 @@ exports.handler = async (event) => {
 
     let text = null;
     let providerUsed = null;
-    let lastError = null;
+    let errorDetails = [];
 
     for (const provider of providers) {
         try {
@@ -115,12 +127,12 @@ exports.handler = async (event) => {
             }
         } catch (err) {
             console.warn(`[Proxy Fallback] ${provider.name} failed:`, err.message);
-            lastError = err;
+            errorDetails.push(err.message);
         }
     }
 
     if (!text) {
-        return { statusCode: 500, body: 'All AI providers failed: ' + (lastError?.message || 'Unknown error') };
+        return { statusCode: 500, body: 'All AI providers failed:\n' + errorDetails.join('\n') };
     }
 
     return {
