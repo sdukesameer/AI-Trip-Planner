@@ -560,6 +560,8 @@ function renderDiscoveryScreen() {
 
         const cardRow = document.createElement('div');
         cardRow.className = 'place-card-grid';
+        const { cols } = getSymmetricCounts();
+        cardRow.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
         section.appendChild(cardRow);
 
         const { initialCount, loadMoreCount } = getSymmetricCounts();
@@ -746,6 +748,8 @@ async function doNearbySearch() {
     try {
         const results = await searchNearbyPlaces(state.config, fullQuery, onSwitch);
         resultsDiv.innerHTML = '';
+        const { cols } = getSymmetricCounts();
+        resultsDiv.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
         if (!results.length) { resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>'; return; }
 
         // Fetch images with location context

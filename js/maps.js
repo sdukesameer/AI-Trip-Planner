@@ -105,9 +105,9 @@ function buildPopup(place, day, color, locations = []) {
         style="display:inline-block;margin-top:8px;padding:4px 12px;background:${color};color:#fff;border-radius:999px;font-size:11px;text-decoration:none;font-weight:600;">
         🗺️ Google Maps</a>`;
     // "Details" button triggers place-modal via custom event
-    const detailBtn = `<button onclick="window.dispatchEvent(new CustomEvent('map-place-detail',{detail:${JSON.stringify(JSON.stringify(place))}}))"
-        style="display:inline-block;margin-top:8px;margin-left:6px;padding:4px 12px;background:transparent;color:${color};border:1.5px solid ${color};border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;">
-        ℹ️ Details</button>`;
+    const detailBtn = `<button data-place-detail='${JSON.stringify(place).replace(/'/g, "&#39;")}'
+    style="display:inline-block;margin-top:8px;margin-left:6px;padding:4px 12px;background:transparent;color:${color};border:1.5px solid ${color};border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;">
+    ℹ️ Details</button>`;
 
     const arrTime = place.arrivalTime ? `<span style="font-size:11px;font-weight:700;color:${color};">${place.arrivalTime}</span>  ` : '';
     const dur = place.visitDuration ? `<span style="font-size:10px;color:#888;">⌛ ${place.visitDuration}</span>` : '';
@@ -131,6 +131,18 @@ export function plotItinerary(itinerary, imageCache, onMarkerClick, locations = 
     _imageCache = imageCache || {};
     clearMarkers();
     if (!map) return;
+
+    if (!map._detailListenerAdded) {
+        map._detailListenerAdded = true;
+        document.addEventListener('click', e => {
+            const btn = e.target.closest('[data-place-detail]');
+            if (!btn) return;
+            try {
+                const place = JSON.parse(btn.getAttribute('data-place-detail'));
+                window.dispatchEvent(new CustomEvent('map-place-detail', { detail: JSON.stringify(place) }));
+            } catch { /* ignore */ }
+        });
+    }
 
     const allLatLngs = [];
 

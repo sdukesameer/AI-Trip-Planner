@@ -33,11 +33,11 @@
 AI Trip Planner generates a full day-by-day travel itinerary for any set of destinations (India-focused, internationally extensible) using large language models. It clusters nearby attractions geographically, schedules them in realistic time blocks (10 AM → 6 PM), estimates entry fees, and renders everything on an interactive map with commute suggestions.
 
 **Smart features:**
-- Multi-provider AI fallback (Gemini → Groq → OpenRouter)
+- Multi-provider AI fallback (Gemini 2.5 Flash → Gemini 2.5 Flash Lite → Groq → OpenRouter)
 - Location-aware image fetching (Unsplash + Picsum fallback)
 - Fuzzy duplicate detection (avoids "Taj Mahal" + "Taj Mahal Museum")
 - Session caching (survives navigation, clears on tab close)
-- Storage quota management (2% usage on 3 MB localStorage)
+- Storage quota management (~30 KB per trip, up to 5 trips in 3 MB localStorage)
 - Keyboard shortcuts (Ctrl+S save, Ctrl+D PDF, Esc close)
 - Dark/light theme (persistent, map tiles swap)
 - Mobile-responsive design (480px breakpoint tested)
@@ -56,25 +56,27 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 
 | Feature | Description |
 |---------|---|
-| 🤖 Multi-provider AI | Gemini 2.5 Flash (quality) → Groq Llama 3.3 (fast) → OpenRouter (safety net) with auto-fallback |
+| 🤖 Multi-provider AI | Gemini 2.5 Flash → Gemini 2.5 Flash Lite → Groq Llama 3.3 70B → Groq Llama 3.1 8B → OpenRouter (auto-fallback) |
 | 🗺️ Interactive Map | Leaflet + CartoDB tiles: pin-drop markers, day-focus overlay, polyline routes, rich popups |
 | 🌤️ Daily Weather | OpenWeatherMap integration: temp range, humidity, rain chance, wind speed (optional, non-blocking) |
 | 📅 Realistic Scheduling | Days start 10 AM, places ordered by `arrivalTime`, realistic visit durations computed cumulatively |
-| 📍 Geographic Clustering | AI groups places within ~5 km radius on the same day; smart routing minimizes backtracking |
-| 🔍 Place Discovery | Photon geocode "Search Nearby" + AI enrichment; custom place paste (comma/newline-separated) |
+| 📍 Geographic Clustering | AI groups places within ~5 km radius on the same day; smart routing minimises backtracking |
+| 🔍 Place Discovery | Photon geocode "Search Nearby" + AI enrichment; Nominatim for coordinate lookup |
+| 🎯 Custom Places | Pre-seed from home screen textarea or paste list in discovery screen; AI auto-enriches names |
 | 📸 Place Images | Unsplash API with context-aware queries (place name + city); Picsum fallback; SVG placeholder |
-| 💾 Save & Share | localStorage (up to 5 trips, ~35 KB each); URL hash encoding for sharing; trip load/restore |
-| 📄 Rich PDF Export | jsPDF: place thumbnails, colored day banners, commute info, entry fee breakdown, weather badges |
+| 💾 Save & Share | localStorage (up to 5 trips, ~30 KB each); URL hash encoding for sharing; trip load/restore |
+| 📄 Rich PDF Export | jsPDF: place thumbnails, coloured day banners, commute info, entry fee breakdown, weather badges |
 | 📋 Emoji Copy Text | WhatsApp-friendly itinerary with flag emojis, time slots, → arrows, metadata |
 | 💰 Budget Estimator | Per-day entry fee tally (tickets only, travel excluded); cost breakdown in accordion headers |
-| 🌙 Dark/Light Theme | Persisted in localStorage; Leaflet tiles & CSS vars adapt automatically |
-| 📱 Mobile Responsive | Full 480px breakpoint with stacked layouts, optimized touch targets, readable text |
-| ⚡ Session Caching | AI responses + images cached in `sessionStorage`; debounced requests, survives screen navigation |
-| 💻 Offline Graceful | Images lazy-load with fallback; weather optional; map works without network (pre-cached tiles) |
+| 🌙 Dark/Light Theme | Persisted in localStorage (`atp_theme`); Leaflet tiles & CSS vars adapt automatically |
+| 📱 Mobile Responsive | Full 480px breakpoint with stacked layouts, optimised touch targets, readable text |
+| ⚡ Session Caching | AI responses cached in `sessionStorage` with composite key; survives screen navigation |
+| 🔢 Progressive Place Grid | Initial 2 rows shown per location; "Load More" reveals cached then fetches fresh from API |
+| 🔁 Collapsible Commute | Getting-there info collapsed by default per place row; expands to show walk/cab/metro detail |
 | 🎯 Auto Place Mode | User selects places manually OR enables "AI picks the best" (smart dedup, geo-context aware) |
 | ⌨️ Keyboard Shortcuts | Ctrl+S → Save, Ctrl+D → PDF, Esc → Close all modals |
 | 🔐 Secure Keys | No API keys in browser; server-side proxy (Netlify functions) keeps secrets safe |
-| 📊 Storage Meter | Visual quota indicator in "My Trips" modal; ~2% usage per trip (well under 3 MB limit) |
+| 📊 Storage Meter | Visual quota indicator in "My Trips" modal with colour-coded bar (green/amber/red) |
 
 ---
 
@@ -84,14 +86,15 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 |---|---|
 | **Core** | Vanilla HTML5, JavaScript ES Modules (no build step required) |
 | **Styling** | Vanilla CSS with CSS custom properties (dark/light theme support) |
-| **Maps** | [Leaflet.js](https://leafletjs.com/) 1.9 + CartoDB (dark/light tiles) |
-| **AI (primary)** | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile` (fastest) |
-| **AI (quality)** | [Google Gemini API](https://ai.google.dev/) — `gemini-2.5-flash` (high quality) |
+| **Maps** | [Leaflet.js](https://leafletjs.com/) 1.9.4 + CartoDB (dark/light tiles) |
+| **AI (primary)** | [Google Gemini API](https://ai.google.dev/) — `gemini-2.5-flash` (highest quality) |
+| **AI (tier 1b)** | [Google Gemini API](https://ai.google.dev/) — `gemini-2.5-flash-lite` (faster, lower cost) |
+| **AI (tier 2)** | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile` then `llama-3.1-8b-instant` |
 | **AI (safety net)** | [OpenRouter API](https://openrouter.ai/) — `meta-llama/llama-3.1-8b-instruct:free` |
 | **Images** | [Unsplash API](https://unsplash.com/developers) + Picsum fallback |
 | **Weather** | [OpenWeatherMap API](https://openweathermap.org/api) (optional, non-blocking) |
-| **Geocoding** | [Photon API](https://photon.komoot.io/) (OpenStreetMap-backed, no key required) |
-| **PDF Export** | [jsPDF](https://github.com/parallax/jsPDF) 2.5 (CDN) |
+| **Geocoding** | [Photon API](https://photon.komoot.io/) for autocomplete; [Nominatim](https://nominatim.openstreetmap.org/) for coordinate lookup (both OSM-backed, no key) |
+| **PDF Export** | [jsPDF](https://github.com/parallax/jsPDF) 2.5.1 (CDN) |
 | **Deployment** | [Netlify](https://netlify.com/) (static hosting + serverless functions) |
 
 ---
@@ -100,7 +103,7 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 
 ```
 AI-Trip-Planner-main/
-├── index.html              # Single-page app shell (3 screens)
+├── index.html              # Single-page app shell (3 screens + modals)
 ├── build-env.js            # Netlify build script: env vars → js/env.js
 ├── netlify.toml            # Netlify config (build command, functions)
 │
@@ -109,7 +112,7 @@ AI-Trip-Planner-main/
 │   └── components.css      # Component-level styles (accordion, map, modals)
 │
 ├── js/
-│   ├── env.js              # API keys (git-ignored; generated at build)
+│   ├── env.js              # API keys (git-ignored; generated at build or edited locally)
 │   ├── app.js              # ★ Main orchestrator: state, screen routing, UI logic
 │   ├── api.js              # AI providers + JSON repair; place discovery, itinerary gen
 │   ├── maps.js             # Leaflet: markers, popups, focus, polylines, theme swap
@@ -129,16 +132,27 @@ AI-Trip-Planner-main/
 ### Screen Flow
 
 ```
-screen-input  ──[Plan My Trip]──►  screen-progress
-    │                                  │
-    │◄─────────────────────────────────┘
+screen-input  ──[Plan My Trip]──►  screen-progress (overlay)
+    │   │                               │
+    │   │ [custom places textarea]      │ (fetches places + images)
+    │   │                               ▼
+    │   │                        screen-discovery
+    │   │                        (select/deselect cards,
+    │   │                         search nearby, paste list,
+    │   │                         load more per location)
+    │   │                               │
+    │   │                        [Generate Itinerary]
+    │   │                               │
+    │   ◄───────────────────────────────┘
     │
     ├─[Load Saved Trip] ─┐
     │                    │
-    │              ┌─────▼─────────┐
-    │              │ screen-itinerary (MAP + ACCORDION)
-    │              │ [Download PDF/TXT/Copy/Save/Share]
-    │              └─────┬─────────┘
+    │              ┌─────▼──────────────┐
+    │              │ screen-itinerary   │
+    │              │ MAP + ACCORDION    │
+    │              │ [PDF/TXT/Copy/     │
+    │              │  Save/Share]       │
+    │              └─────┬──────────────┘
     │                    │
     └────[Share/Load]────┘
 ```
@@ -152,8 +166,8 @@ screen-input  ──[Plan My Trip]──►  screen-progress
 {
   name:          string;           // Display name
   location:      string;           // City/area
-  shortDesc?:    string;           // 1-line teaser
-  desc?:         string;           // 2–3 sentence description
+  shortDesc?:    string;           // 1-line teaser (discovery screen)
+  desc?:         string;           // 2–3 sentence description (itinerary)
   category?:     'Heritage' | 'Nature' | 'Religious' | 'Market' | 'Museum' | 'Entertainment' | 'Food';
   openingHours?: string;           // e.g. "9:00 AM – 6:00 PM" or "Open 24hrs"
   entryFee?:     string;           // e.g. "₹40" or "Free"
@@ -199,43 +213,50 @@ screen-input  ──[Plan My Trip]──►  screen-progress
 
 ## API Integrations
 
-### Groq (Primary AI)
-- **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
-- **Model:** `llama-3.3-70b-versatile` (fastest, high quality)
-- **Fallback:** `llama-3.1-8b-instant`
-- **Rate limits:** Free tier ~30 RPM / 10 rps (very generous)
-- **Status:** ✅ **CURRENT BEST CHOICE** (speed + quality)
-
-### Google Gemini (Quality Fallback)
+### Google Gemini (Primary AI — Tier 1)
 - **Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **Models:** `gemini-2.5-flash` (primary), `gemini-2.5-flash-lite` (budget)
-- **Rate limits:** Free tier ~15 RPM / 1M TPD
-- **Status:** ✅ High quality, slower than Groq
+- **Models:** `gemini-2.5-flash` (primary), `gemini-2.5-flash-lite` (tier 1b)
+- **Rate limits:** Free tier ~10 RPM / 250 RPD
+- **Status:** ✅ Highest quality; first in fallback chain
 
-### OpenRouter (Safety Net)
+### Groq (Fast Fallback — Tier 2)
+- **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
+- **Models:** `llama-3.3-70b-versatile` (tier 2a), `llama-3.1-8b-instant` (tier 2b)
+- **Rate limits:** Free tier ~14,400 req/day
+- **Status:** ✅ Very fast; catches Gemini 429s reliably
+
+### OpenRouter (Safety Net — Tier 3)
 - **Endpoint:** `https://openrouter.ai/api/v1/chat/completions`
 - **Model:** `meta-llama/llama-3.1-8b-instruct:free`
-- **Rate limits:** Free tier very generous
-- **Status:** ✅ Ultimate fallback, always works
+- **Rate limits:** Free tier ~50 req/day (as of Apr 2025)
+- **Status:** ✅ Ultimate fallback; lower quality than Gemini/Groq
 
 ### Unsplash (Images)
 - **Endpoint:** `https://api.unsplash.com/search/photos`
 - **Query strategy:** `"{place name} {city} landmark"` for location specificity
-- **Fallback:** Picsum (seeded by place name hash)
+- **Fallback:** Picsum (seeded by place name hash) → SVG placeholder
 - **Rate limits:** Free tier 50 req/hour
-- **Status:** ✅ Excellent; Picsum fallback ensures no broken images
+- **Status:** ✅ Excellent; double fallback ensures no broken images
 
-### Photon (Geocoding)
+### Photon (Location Autocomplete)
 - **Endpoint:** `https://photon.komoot.io/api/?q={query}&limit=6&lang=en`
-- **Backend:** OpenStreetMap (no proprietary data)
+- **Backend:** OpenStreetMap
 - **Key required:** ❌ None (public API, CORS-free)
-- **Status:** ✅ Perfect for location autocomplete
+- **Used for:** Destination input autocomplete on home screen
+- **Status:** ✅ No key needed
+
+### Nominatim (Coordinate Lookup)
+- **Endpoint:** `https://nominatim.openstreetmap.org/search`
+- **Backend:** OpenStreetMap
+- **Key required:** ❌ None
+- **Used for:** Resolving a search query to lat/lng inside "Search Nearby"
+- **Status:** ✅ No key needed
 
 ### OpenWeatherMap (Weather)
 - **Endpoint:** `https://api.openweathermap.org/data/2.5/forecast` (via `weather-proxy`)
-- **Used for:** Daily temp, humidity, rain chance, wind
-- **Key required:** ✅ Yes (optional)
-- **Failure mode:** Graceful (badges simply don't appear)
+- **Used for:** Daily temp range, humidity, rain chance %, wind speed
+- **Key required:** ✅ Yes (optional — weather badges simply don't appear without it)
+- **Failure mode:** Fully graceful (non-blocking background fetch)
 - **Status:** ✅ Non-blocking enhancement
 
 ---
@@ -246,21 +267,21 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 
 | Variable | Description | Required | Free Tier |
 |---|---|---|---|
-| `GEMINI_API_KEY` | Google AI Studio API key | ❌ No (Groq is primary) | ✅ 15 RPM |
-| `GROQ_API_KEY` | Groq Cloud API key | ✅ **Yes (primary)** | ✅ 30 RPM |
-| `OPENROUTER_API_KEY` | OpenRouter API key | ❌ No (fallback) | ✅ Yes |
+| `GEMINI_API_KEY` | Google AI Studio API key | ✅ **Yes (primary)** | ✅ 10 RPM / 250 RPD |
+| `GROQ_API_KEY` | Groq Cloud API key | ❌ No (Tier 2 fallback) | ✅ ~14,400 req/day |
+| `OPENROUTER_API_KEY` | OpenRouter API key | ❌ No (Tier 3 fallback) | ✅ ~50 req/day |
 | `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | ❌ No | ✅ 50 req/hr |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap API key | ❌ No (optional) | ✅ 1,000 req/day |
 
-> **Security:** Keys are **never** exposed to the browser. `build-env.js` injects them into `js/env.js` at build time. Production requests route through Netlify serverless functions (`ai-proxy.js`, `unsplash-proxy.js`, `weather-proxy.js`), keeping keys server-side.
+> **Security:** Keys are **never** exposed to the browser. `build-env.js` injects client-side keys (Gemini, Groq, OpenRouter, Unsplash) into `js/env.js` at build time for local dev fallback. Production requests route through Netlify serverless functions (`ai-proxy.js`, `unsplash-proxy.js`, `weather-proxy.js`), keeping keys server-side. The OpenWeather key is server-side only and never appears in `js/env.js`.
 
 ### Getting API Keys
 
 | Provider | URL | Free Tier | Setup Time |
 |---|---|---|---|
-| **Groq** | https://console.groq.com/keys | ✅ 30 RPM | 2 min |
-| **Gemini** | https://aistudio.google.com/apikey | ✅ 15 RPM | 2 min |
-| **OpenRouter** | https://openrouter.ai/keys | ✅ Yes | 2 min |
+| **Gemini** | https://aistudio.google.com/apikey | ✅ 10 RPM | 2 min |
+| **Groq** | https://console.groq.com/keys | ✅ ~14,400 req/day | 2 min |
+| **OpenRouter** | https://openrouter.ai/keys | ✅ ~50 req/day | 2 min |
 | **Unsplash** | https://unsplash.com/developers | ✅ 50 req/hr | 5 min |
 | **OpenWeatherMap** | https://openweathermap.org/api | ✅ 1,000 req/day | 3 min |
 
@@ -286,9 +307,10 @@ npm install
 
 # 3. Configure local API keys
 # Edit js/env.js and replace placeholders with your keys:
-# - PASTE_YOUR_GROQ_KEY_HERE → your Groq API key
-# - PASTE_YOUR_GEMINI_KEY_HERE → your Gemini API key (optional)
-# - PASTE_YOUR_UNSPLASH_KEY_HERE → your Unsplash key (optional)
+# - PASTE_YOUR_GEMINI_KEY_HERE     → your Gemini API key (primary)
+# - PASTE_YOUR_GROQ_KEY_HERE       → your Groq API key (optional fallback)
+# - PASTE_YOUR_UNSPLASH_KEY_HERE   → your Unsplash key (optional)
+# Note: OPENWEATHER_API_KEY is server-side only; weather won't work in local dev
 
 # 4. Start dev server (hot reload, no build step)
 npm run dev
@@ -301,9 +323,10 @@ npm run dev
 - **No build step required** — app uses native ES modules
 - **Hot reload** — changes reflected instantly
 - **Console errors** — check browser DevTools for AI provider fallback logs
-- **Session storage** — inspect `sessionStorage` in DevTools → Application tab
-- **Local storage** — saved trips visible in `localStorage` → `atp_saved_trips`
+- **Session storage** — inspect `sessionStorage` in DevTools → Application tab (keys prefixed `atp_`)
+- **Local storage** — saved trips visible in `localStorage` → `atp_saved_trips`; theme in `atp_theme`
 - **Throttle network** → DevTools → Network → "Slow 3G" to test graceful degradation
+- **Weather in local dev** — weather proxy requires a Netlify function; weather badges won't appear locally unless you run `netlify dev`
 
 ---
 
@@ -318,12 +341,12 @@ git push origin main
 1. Go to [Netlify](https://app.netlify.com/)
 2. Click "New site from Git"
 3. Select your repository
-4. Netlify auto-detects settings (no further config needed)
+4. Netlify auto-detects settings from `netlify.toml` (no further config needed)
 
 ### Step 3: Set Environment Variables
 1. Go to `Site Settings → Build & Deploy → Environment Variables`
 2. Add all 5 keys (see table above)
-3. **Critical:** `GROQ_API_KEY` is required; others are optional
+3. **Critical:** At least `GEMINI_API_KEY` is required; others are optional fallbacks/enhancements
 
 ### Step 4: Deploy
 ```bash
@@ -334,10 +357,11 @@ git push origin main
 ### Build Process
 ```
 git push → Netlify receives webhook → npm run build (= node build-env.js)
-→ build-env.js reads env vars → writes js/env.js → deploys
+→ build-env.js reads env vars → writes js/env.js (gemini/groq/openrouter/unsplash only)
+→ deploys static site + serverless functions
 ```
 
-> **Note:** `js/env.js` is **never** committed to git (in `.gitignore`). It's generated fresh at build time.
+> **Note:** `js/env.js` is **never** committed to git (in `.gitignore`). It is generated fresh at build time. The `OPENWEATHER_API_KEY` is only ever read by the serverless `weather-proxy.js` function and is never written to `js/env.js`.
 
 ---
 
@@ -345,7 +369,7 @@ git push → Netlify receives webhook → npm run build (= node build-env.js)
 
 ### localStorage Quota
 
-Your app uses **3 MB (3,072 KB) of localStorage** for saving trips. Each trip takes ~25–35 KB.
+The app uses `atp_saved_trips` in localStorage, capped at a **3 MB (3,072 KB)** soft limit. Each trip takes ~25–35 KB. Up to 5 trips are kept; older trips are dropped automatically when saving would exceed the limit.
 
 #### Breakdown Per Trip
 ```
@@ -355,7 +379,7 @@ Goa (7 days)     = 31 KB
 ─────────────────────────
 Current usage    = 95 KB (3% of 3,072 KB)
 Remaining        = 2,977 KB (97%)
-Safe threshold   = 2,500 KB (81%)
+Safe threshold   = ~3,800 KB before auto-trim kicks in
 ```
 
 #### What Gets Stored?
@@ -366,38 +390,32 @@ Safe threshold   = 2,500 KB (81%)
 │   "2024-12-01" → "2024-12-15"
 ├── Itinerary structure (15–20 KB)
 │   Days + places + metadata
-├── Image URLs — Unsplash links only (8–12 KB)
+├── Image URLs — Unsplash/Picsum links only (8–12 KB)
 │   https://images.unsplash.com/... (NOT base64, NOT embedded)
 └── Metadata (0.5 KB)
-    Saved timestamp, trip name
+    Saved timestamp, trip summary
 ```
+
+> **Note:** Base64 image data is explicitly stripped before saving. Only `https://` URLs are persisted in `imageCache`.
 
 ### Storage Meter in UI
 
-The "My Trips" modal displays:
+The "My Trips" modal displays a colour-coded bar:
 ```
-💾 Storage Used:  [████░░░░░░░░░░░░░░░░░░] 2% (95 KB / 3,072 KB)
+💾 Storage Used:  [████░░░░░░░░░░░░░░░░░░] 3% (95 KB / 3,072 KB)
 ```
 
 Colors:
-- 🟢 Green (0–50%): Plenty of space
-- 🟡 Amber (51–80%): Getting full
-- 🔴 Red (81%+): Delete old trips soon
+- 🟢 Green (0–49%): Plenty of space
+- 🟡 Amber (50–79%): Getting full
+- 🔴 Red (80%+): Delete old trips soon
 
 ### Cleanup Strategy
 
-When approaching quota (81%+):
-
-1. **Auto-prompt:** App warns "Storage nearly full — delete old trips first"
-2. **Manual deletion:** Click "My Trips" → ✕ next to trip → removed instantly
-3. **Per-save guard:** If saving new trip would exceed quota, oldest trip auto-removed
-4. **Browser limit:** If localStorage completely full, alert tells user to clear browser data
-
-### Performance Impact
-
-- **0–50% quota used:** No slowdown
-- **51–80%:** Negligible (< 100 ms lookup)
-- **81%+:** Slight delay when opening "My Trips" modal
+1. **Auto-trim on save:** If the serialised trips JSON exceeds ~3,800 KB, the oldest trip is dropped automatically before saving
+2. **Manual deletion:** Click "My Trips" → ✕ next to any trip — removed instantly, meter updates
+3. **Clear all:** "My Trips" → 🗑️ Clear All button
+4. **Browser limit:** If localStorage is completely full (e.g. other sites), a `QuotaExceededError` toast is shown
 
 ---
 
@@ -405,28 +423,37 @@ When approaching quota (81%+):
 
 ### Multi-Provider AI Fallback
 
-`api.js` exports `smartAICall(prompt, config, onProviderSwitch)` which tries providers in order:
+Both `api.js` (local dev, direct calls) and `ai-proxy.js` (production, server-side) implement the same 5-provider chain:
 
 ```
-Gemini 2.5 Flash (Quality)
+Gemini 2.5 Flash         (best quality)
+    ↓ [429 / timeout]
+Gemini 2.5 Flash Lite    (faster, cheaper)
     ↓ [fails]
-Gemini 2.5 Flash Lite (Lite)
+Groq Llama 3.3 70B       (very fast, LPU hardware)
     ↓ [fails]
-Groq Llama 3.3 70B (Fastest)
+Groq Llama 3.1 8B        (smaller, still fast)
     ↓ [fails]
-Groq Llama 3.1 8B (Fast)
-    ↓ [fails]
-OpenRouter Llama 3.1 8B Free (Safety Net)
-    ↓ [all fail → throw error]
+OpenRouter Llama 3.1 8B  (free safety net, ~50 req/day)
+    ↓ [all fail → throw error shown to user]
 ```
 
-Each provider is wrapped in try/catch. On failure, logs warning + moves to next.
+Each provider is wrapped in try/catch. On failure, logs warning + moves to next. The proxy adds a 9s per-provider timeout (Netlify functions have a 10s hard wall).
 
-**Production (Netlify):** Requests go through `ai-proxy.js`, which has identical fallback chain but runs server-side (more reliable).
+**Production (Netlify):** Browser calls `ai-proxy.js` first. If the proxy itself 504s, `api.js` falls through to direct API calls using keys from `js/env.js` (which are empty strings in production, so this last-resort path effectively fails gracefully and shows the error toast).
+
+### Custom Places Flow
+
+Users can pre-seed place names in two ways:
+
+1. **Home screen textarea** ("I already know where I want to go") — parsed before the discovery screen loads
+2. **Discovery screen "Paste List" button** — opens a modal to paste names at any point
+
+In both cases, `enrichCustomPlaces()` is called to fetch AI-generated descriptions and categories for the raw names. Enriched places are merged with the famous-places list (fuzzy-deduped) and auto-selected. They appear first in the discovery grid.
 
 ### JSON Repair Pipeline
 
-AI responses often have trailing commas or markdown fences. `extractJSON()` applies 3-stage repair:
+AI responses often have trailing commas or markdown fences. `extractJSON()` applies a 3-stage repair:
 
 1. **Strip markdown fences:** ` ```json { ... } ``` ` → ` { ... } `
 2. **Remove trailing commas:** `, ]` → `]`, `, }` → `}`
@@ -434,14 +461,18 @@ AI responses often have trailing commas or markdown fences. `extractJSON()` appl
 
 ### Session Caching
 
-All AI responses cached in `sessionStorage` with composite key:
+All AI responses cached in `sessionStorage` with composite keys:
 ```javascript
-cacheKey = "places|Delhi,Mumbai|2024-12-01|2024-12-15"
+"places|Delhi,Mumbai|"           // famous places fetch
+"enrich|Red Fort,Qutub|Delhi"   // custom place enrichment
+"itin|Delhi|2024-12-01|2024-12-15|auto"  // itinerary
 ```
 
-Survives screen navigation within same browser tab. Clears on tab close.
+Survives screen navigation within same browser tab. Clears on tab close. Keyed so that changing locations/dates/selection always triggers a fresh fetch.
 
-**Trade-off:** Caching is in-memory + sessionStorage. Production could add Redis for multi-user, but out of scope.
+### Progressive Place Grid
+
+On the discovery screen, each location section shows an initial 2 rows of cards (column count matches the CSS grid columns, computed by `getSymmetricCounts()` based on viewport width). The "Load More" button first reveals already-fetched places, then calls `fetchMorePlaces()` to get additional ones from the AI when the local cache is exhausted.
 
 ### Geographic Clustering
 
@@ -466,20 +497,26 @@ Place 3: arrivalTime = 12:30 + 1.5 hrs (visit) + 20 min (transit) = 2:20 PM
 if (map) { map.off(); map.remove(); }
 map = null;
 markersGrid = [];
+polylinesByDay = [];
+container.innerHTML = '';
 ```
 
 Prevents `_leaflet_id` null errors on saved trip load + theme toggle.
 
 ### Image Fetching Strategy
 
-For each place, app fetches images using location context:
+For each place, images are fetched with location context:
 
 ```javascript
 query = "{place name} {city} landmark"
 // "Taj Mahal Agra landmark" gets far better results than "Taj Mahal"
 ```
 
-Results scored by keyword overlap. Unsplash fallback to Picsum if no key.
+Results are scored by keyword overlap with place name. Fallback chain: Unsplash → Picsum (seeded by place name hash) → SVG placeholder with place name text.
+
+### Collapsible Commute UI
+
+Commute information (walk/cab/metro) between consecutive places is rendered as a collapsible row. A summary line shows the quickest option; clicking expands to show all modes. This uses a delegated `click` listener on `[data-commute-toggle]` attributes — CSP-safe, works for dynamically rendered rows.
 
 ---
 
@@ -511,36 +548,37 @@ Results scored by keyword overlap. Unsplash fallback to Picsum if no key.
 1. **Images load lazily** — only when place card becomes visible
 2. **SVG placeholder** — appears instantly if image fetch takes > 2s
 3. **Map tiles cached** — subsequent loads use browser cache
-4. **Session cache** — revisiting discovery screen doesn't refetch places
+4. **Session cache** — revisiting discovery screen doesn't refetch places or images
 
 ### For Self-Hosting
 
 1. **Enable Gzip compression** on your web server
 2. **Set cache headers** on map tiles (immutable, 1-year expiry)
-3. **Lazy-load Leaflet** — only load on itinerary screen (currently always loaded; future optimization)
+3. **Lazy-load Leaflet** — only load on itinerary screen (currently always loaded; future optimisation)
 4. **Consider CDN** for map tiles if hosting outside US
 
 ### Browser DevTools Tips
 
 ```javascript
-// Check session cache size
-Object.entries(sessionStorage).filter(([k]) => k.startsWith('atp_')).length
+// Check session cache entries
+Object.keys(sessionStorage).filter(k => k.startsWith('atp_'))
 
 // View all saved trips
 JSON.parse(localStorage.getItem('atp_saved_trips')).map(t => ({
   locations: t.locations,
-  days: t.itinerary?.days.length
+  days: t.itinerary?.days.length,
+  sizeKB: Math.round(JSON.stringify(t).length / 1024)
 }))
 
 // Calculate storage used
-Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024) + ' KB'
+Math.round(new Blob([localStorage.getItem('atp_saved_trips') || '']).size / 1024) + ' KB'
 ```
 
 ---
 
 ## Roadmap
 
-### Phase 1 — High Impact (Q1 2025)
+### Phase 1 — High Impact
 
 - [ ] **Offline mode** (Service Worker + IndexedDB)
   - Cache itinerary + images for offline viewing
@@ -548,8 +586,7 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
   - Impact: 🔴 Essential for field use
 
 - [ ] **Google Calendar export**
-  - Create calendar events for each place
-  - Set reminders (1 day before, morning of)
+  - Create calendar events for each place with reminders
   - Include location + commute time
   - Impact: 🔴 High workflow integration
 
@@ -559,7 +596,7 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
   - Budget tier selection (budget/mid/luxury)
   - Impact: 🔴 Accessibility + inclusivity
 
-### Phase 2 — Medium Impact (Q2 2025)
+### Phase 2 — Medium Impact
 
 - [ ] **Dynamic pricing**
   - Live hotel rates (Agoda/Booking)
@@ -571,7 +608,6 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
   - Total km traveled (from place coords)
   - Average daily budget
   - Best photo (Unsplash highest-rated)
-  - Elevation profile (mountain trips)
 
 - [ ] **Multi-user trip editing** (beta)
   - Shareable edit link (not just view)
@@ -581,11 +617,10 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
 - [ ] **AI packing list generator**
   - Based on weather + activities
   - Luggage weight estimate
-  - Rental vs. buy recommendations
 
-### Phase 3 — Polish & Scale (Q3–Q4 2025)
+### Phase 3 — Polish & Scale
 
-- [ ] **Internationalization (i18n)**
+- [ ] **Internationalisation (i18n)**
   - Support 10+ languages
   - Regional currency display (€, £, ¥, etc.)
   - Locale-aware date formats
@@ -595,15 +630,12 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
   - See friends' past itineraries
   - Vote on best places
 
-- [ ] **Content curation**
-  - Seasonal trip templates (monsoon safaris, winter treks)
-  - Guided tour operator directory
-  - User-submitted itineraries
-
 - [ ] **Analytics & telemetry**
   - Track which AI provider performs best
   - Popular destinations heat map
-  - Common trip durations
+
+- [ ] **Weather in local dev**
+  - Proxy weather calls through a configurable local endpoint so `npm run dev` shows weather badges without `netlify dev`
 
 ---
 
@@ -611,49 +643,50 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
 
 ### "All AI providers failed"
 
-**Symptoms:** Error message after clicking "Plan My Trip"
+**Symptoms:** Error message after clicking "Plan My Trip" or "Generate Itinerary"
 
 **Causes:**
 1. No API keys configured (check Netlify env vars)
-2. All providers rate-limited (unlikely; Groq free tier is 30 RPM)
+2. All providers rate-limited (Gemini free tier is 10 RPM / 250 RPD; consider adding a Groq key)
 3. Network issue (check browser DevTools → Network tab)
 
 **Solution:**
-- ✅ Ensure `GROQ_API_KEY` is set in Netlify env vars
+- ✅ Ensure at least `GEMINI_API_KEY` is set in Netlify env vars
+- ✅ Add `GROQ_API_KEY` for a fast Tier 2 fallback (14,400 req/day free)
 - ✅ Try again in 1 minute (rate limit timeout)
-- ✅ Check console logs (DevTools → Console): which provider failed?
+- ✅ Check console logs (DevTools → Console) — each failed provider is logged with its error
 
 ---
 
-### Images show as gray placeholders
+### Images show as grey placeholders
 
 **Symptoms:** Place cards display SVG fallback instead of Unsplash photos
 
 **Causes:**
-1. `UNSPLASH_ACCESS_KEY` not configured (app still works, just uses fallback)
-2. Unsplash API key invalid or rate-limited
+1. `UNSPLASH_ACCESS_KEY` not configured — app falls back to Picsum automatically, then SVG
+2. Unsplash API key invalid or rate-limited (50 req/hr free)
 3. Network blocked Unsplash (corporate firewall)
 
 **Solution:**
-- ✅ Add valid Unsplash key to Netlify env vars
-- ✅ Check Unsplash console (api.unsplash.com) for rate limits
-- ✅ App works fine without Unsplash; SVG fallback is acceptable
+- ✅ App works fine without Unsplash; Picsum provides seeded placeholder photos
+- ✅ Add valid Unsplash key to Netlify env vars for real location photos
+- ✅ Check Unsplash developer console for rate limits
 
 ---
 
-### Map won't load or shows blank
+### Map won't load or shows blank / error message
 
-**Symptoms:** Map container is empty or shows "Map failed to load"
+**Symptoms:** Map container is empty, shows "Map failed to load", or Leaflet errors in console
 
 **Causes:**
-1. Leaflet JS not loaded (rare; CDN issue)
-2. Coordinates invalid (place has no lat/lng)
+1. Leaflet JS not loaded (CDN issue — rare)
+2. All itinerary places have no lat/lng coordinates (AI didn't return them)
 3. Browser cookies/storage quota exceeded
 
 **Solution:**
-- ✅ Hard refresh (Ctrl+Shift+R on Windows, Cmd+Shift+R on Mac)
+- ✅ Hard refresh (Ctrl+Shift+R / Cmd+Shift+R)
 - ✅ Clear browser cache: Settings → Privacy → Clear browsing data
-- ✅ Check browser console for errors (DevTools → Console)
+- ✅ If coordinates are missing, regenerate the itinerary — the map renders gracefully with only places that have valid coords
 
 ---
 
@@ -663,78 +696,91 @@ Math.round(JSON.stringify(localStorage.getItem('atp_saved_trips')).length / 1024
 
 **Causes:**
 1. **Private/Incognito mode** — localStorage not available
-2. **Cookies disabled** — localStorage disabled too
-3. **Storage quota full** (3 MB limit)
+2. **Cookies disabled** — localStorage blocked
+3. **Storage quota full** (3 MB soft limit)
 
 **Solution:**
 - ✅ Use **normal browsing mode** (not Incognito)
 - ✅ Enable cookies: Settings → Privacy → Allow cookies
-- ✅ Delete old trips: "My Trips" modal → ✕ button
-- ✅ Clear browser cache if quota mysteriously full
+- ✅ Delete old trips: "My Trips" modal → ✕ button; storage meter shows current usage
 
 ---
 
 ### PDF export has broken images
 
-**Symptoms:** PDF downloads but place thumbnails are missing/blank
+**Symptoms:** PDF downloads but place thumbnails are missing or blank
 
 **Causes:**
-1. Unsplash images timed out (slow network)
-2. Image URL is base64 (not allowed in PDF)
-3. jsPDF couldn't load image (CORS issue)
+1. Unsplash images timed out during base64 conversion (slow network)
+2. Image URL is a data-URI / SVG placeholder (not supported by jsPDF's `addImage`)
+3. CORS issue — Unsplash URLs are fetched client-side for base64 conversion
 
 **Solution:**
-- ✅ Ensure Unsplash key is configured + valid
-- ✅ Try again on faster network
-- ✅ App gracefully skips broken images; PDF will have text-only fallback
+- ✅ Ensure Unsplash key is configured for real `https://` image URLs
+- ✅ Try again on a faster network
+- ✅ App gracefully skips images that fail conversion; PDF will have text-only rows for those places
+
+---
+
+### Weather badges missing
+
+**Symptoms:** Itinerary shows days but no weather icons/temperature badges
+
+**Causes:**
+1. `OPENWEATHER_API_KEY` not configured (optional — badges simply don't appear)
+2. Trip dates are more than 5 days in the future (OpenWeatherMap free tier is 5-day forecast only)
+3. Local dev without `netlify dev` — the `weather-proxy` function isn't available
+
+**Solution:**
+- ✅ This is **expected behaviour** — weather is an optional enhancement
+- ✅ Weather only appears for the next 5 days from today
+- ✅ Run `netlify dev` locally to test weather; or deploy and test on Netlify
+
+---
+
+### Custom places not appearing in discovery grid
+
+**Symptoms:** Places typed in the home screen textarea or pasted in discovery don't show up as cards
+
+**Causes:**
+1. Names were fuzzy-matched to existing famous places (they appear as pre-selected cards in the main grid)
+2. Enrichment AI call failed — stub objects are created but may not have images yet
+
+**Solution:**
+- ✅ Check if the place card exists elsewhere in the grid with a ✓ checkmark (already auto-selected)
+- ✅ Use the "Search Nearby" bar to find the place if it isn't appearing
+- ✅ Check browser console for enrichment errors
 
 ---
 
 ### Keyboard shortcuts don't work
 
-**Symptoms:** Ctrl+S or Ctrl+D don't save/download
+**Symptoms:** Ctrl+S or Ctrl+D don't trigger save/download
 
 **Causes:**
-1. Not on itinerary screen (shortcuts only active there)
-2. Modal open (modals steal focus)
-3. Browser intercepting shortcut (rare; some browsers override)
+1. Not on the itinerary screen (shortcuts are only active on `screen-itinerary`)
+2. A modal is open (modals capture focus but don't intercept these shortcuts — close modals first)
+3. Browser intercepting the shortcut (rare; some browsers override Ctrl+S)
 
 **Solution:**
-- ✅ Make sure itinerary screen is active (no modals open)
-- ✅ Click "Save" / "PDF" button instead (same effect)
-- ✅ Try different browser if still failing
+- ✅ Ensure the itinerary screen is active with no modals open
+- ✅ Click "Save" / "PDF" buttons instead (identical effect)
 
 ---
 
-### Weather badges missing on saved trip load
+### Mobile layout broken on specific devices
 
-**Symptoms:** Loaded trip shows itinerary but no weather info
-
-**Causes:**
-1. Weather API key not configured (optional, fails gracefully)
-2. API response timed out
-3. Weather data for trip dates expired (older than 5 days)
-
-**Solution:**
-- ✅ This is **not an error**; weather is optional enhancement
-- ✅ Weather only fetches for next 5 days (OpenWeatherMap limit)
-- ✅ Regenerate itinerary to fetch fresh weather
-
----
-
-### Mobile app layout broken on specific devices
-
-**Symptoms:** Text overflows, buttons misaligned, map too tall
+**Symptoms:** Text overflows, buttons misaligned, map too small
 
 **Causes:**
 1. Very old Android browser (pre-Chrome 90)
-2. Non-standard viewport (tablet + keyboard combo)
-3. Custom font size in OS settings
+2. Custom OS font size setting
+3. Non-standard viewport (e.g. split-screen tablet mode)
 
 **Solution:**
-- ✅ Upgrade to latest Chrome/Safari version
+- ✅ Upgrade to latest Chrome or Safari
 - ✅ Reset device font size to default
-- ✅ Try landscape orientation
+- ✅ Tested breakpoints: 480px, 600px, 900px — report issues with exact device + browser version
 
 ---
 
@@ -754,7 +800,7 @@ Love the project? Want to contribute?
 
 - **No TypeScript** — stick to Vanilla JS ES Modules
 - **No build tools** — Leaflet and jsPDF via CDN only
-- **CSS custom properties** — use `--accent`, `--bg-card` for all colors
+- **CSS custom properties** — use `--accent`, `--bg-card` etc. for all colours
 - **Comments** — explain "why", not "what"
 - **Functions** — keep < 50 lines; split into modules
 - **Errors** — always use `showToast()` for user feedback, never `alert()`
@@ -764,11 +810,12 @@ Love the project? Want to contribute?
 
 - [ ] Run `npm run dev` and test all 3 screens
 - [ ] Add destination + places + generate itinerary
-- [ ] Save trip + reload browser → trip still there
-- [ ] Share link + open in new incognito window → pre-fills
+- [ ] Test custom places via home textarea and discovery paste-list
+- [ ] Save trip + reload browser → trip still there, storage meter updates
+- [ ] Share link + open in new incognito window → pre-fills locations + custom places
 - [ ] Download PDF + verify images + formatting
 - [ ] Copy to clipboard + paste in WhatsApp
-- [ ] Test dark/light theme toggle
+- [ ] Test dark/light theme toggle (map tiles swap)
 - [ ] Test on mobile (DevTools → iPhone 12 emulation)
 - [ ] Check browser console for errors
 
@@ -783,20 +830,31 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 ## Acknowledgments
 
 - **Leaflet.js** team for excellent map library
-- **Groq** for incredible Llama 3.3 70B speed
+- **Google Gemini** for powerful 2.5 Flash models
+- **Groq** for incredible LPU-accelerated Llama inference
 - **OpenWeatherMap** for reliable weather data
 - **Unsplash** for gorgeous place photography
-- **OpenStreetMap** community for map data
+- **OpenStreetMap** / **Photon** / **Nominatim** for geocoding
 
 ---
 
 ## Changelog
 
-### v1.1.0 (Current)
+### v1.2.0 (Current)
+- ✅ Gemini 2.5 Flash as primary AI (replaces Groq as primary)
+- ✅ Gemini 2.5 Flash Lite added as Tier 1b fallback
+- ✅ Custom places: home screen textarea + discovery paste-list with AI enrichment
+- ✅ Progressive place grid (2 rows initial, load-more reveals cached then fetches)
+- ✅ Collapsible commute rows (summary line + expandable detail)
+- ✅ Card detail button (⤢) on discovery cards for quick place info modal
+- ✅ Nominatim geocoding inside "Search Nearby" for coordinate resolution
+- ✅ Map popup "Details" button opens place modal via delegated event (CSP-safe)
+- ✅ Symmetric grid column count forced to match `getSymmetricCounts()` viewport calculation
+
+### v1.1.0
 - ✅ Multi-provider AI fallback (Groq → Gemini → OpenRouter)
 - ✅ Storage quota management + visual meter
 - ✅ Weather integration (OpenWeatherMap)
-- ✅ Custom place paste (textarea)
 - ✅ Fuzzy duplicate detection
 - ✅ Session caching for performance
 - ✅ Keyboard shortcuts (Ctrl+S, Ctrl+D, Esc)
@@ -814,17 +872,15 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 ## Contact & Support
 
 **Issues?** Open a GitHub issue with:
-- Expected behavior
-- Actual behavior
+- Expected behaviour
+- Actual behaviour
 - Device + browser + version
-- Screenshots/console logs
+- Screenshots / console logs
 
 **Questions?** Check the [troubleshooting section](#troubleshooting) or email: sdukesameer@gmail.com
-
-**Want to sponsor development?** Reach out! We're always looking for support.
 
 ---
 
 *Generated itineraries are for planning purposes only. Always check official sources for current opening hours, entry fees, and closures before visiting.*
 
-**Built with ❤️ by Md Sameer • Deployed on Netlify • Powered by Groq + Gemini + OpenRouter**
+**Built with ❤️ by Md Sameer • Deployed on Netlify • Powered by Gemini + Groq + OpenRouter**
