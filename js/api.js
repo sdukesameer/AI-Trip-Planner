@@ -4,13 +4,13 @@
 
 // ── AI Provider Definitions (CURRENT WORKING MODELS) ──────────────
 const AI_PROVIDERS = [
-    // TIER 1: Groq (Fastest - Llama 3.3 70B - STILL WORKING)
-    { name: 'Llama 3.3 70B Versatile (Groq)', model: 'llama-3.3-70b-versatile', type: 'groq' },
-    { name: 'Llama 3.1 8B Instant (Groq)', model: 'llama-3.1-8b-instant', type: 'groq' },
-
-    // TIER 2: Google Gemini (High Quality - Current Working Models)
+    // TIER 1: Google Gemini (Quality First)
     { name: 'Gemini 2.5 Flash', model: 'gemini-2.5-flash', type: 'gemini' },
     { name: 'Gemini 2.5 Flash Lite', model: 'gemini-2.5-flash-lite', type: 'gemini' },
+
+    // TIER 2: Groq (Fast fallback)
+    { name: 'Llama 3.3 70B Versatile (Groq)', model: 'llama-3.3-70b-versatile', type: 'groq' },
+    { name: 'Llama 3.1 8B Instant (Groq)', model: 'llama-3.1-8b-instant', type: 'groq' },
 
     // TIER 3: OpenRouter (Ultimate safety net)
     { name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' },
@@ -60,10 +60,11 @@ async function smartAICall(prompt, config, onProviderSwitch) {
 
     // Production: route through serverless proxy so keys stay server-side
     if (isProxied()) {
-        if (onProviderSwitch) onProviderSwitch('Proxy (Auto-Fallback)');
+        if (onProviderSwitch) onProviderSwitch('Connecting…');
         try {
             const data = await callViaProxy(prompt);
-            lastProviderUsed = data.providerUsed || 'Proxy (Auto-Fallback)';
+            lastProviderUsed = data.providerUsed || 'Unknown';
+            if (onProviderSwitch) onProviderSwitch(lastProviderUsed);
             return data.text || '';
         } catch (err) {
             throw new Error('All AI providers failed via proxy:\n' + err.message);

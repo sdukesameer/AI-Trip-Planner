@@ -144,13 +144,13 @@ exports.handler = async (event) => {
 
     // ── Provider fallback chain (BEST → GOOD → FALLBACK) ──────────
     const providers = [
-        // TIER 1: Groq (Fast)
-        { name: 'Llama 3.3 70B Versatile (Groq)', fn: groq33Versatile },
-        { name: 'Llama 3.1 8B Instant (Groq)', fn: groq31Instant },
-
-        // TIER 2: Google Gemini (High Quality)
+        // TIER 1: Google Gemini (Quality First)
         { name: 'Gemini 2.5 Flash', fn: gemini25Flash },
         { name: 'Gemini 2.5 Flash Lite', fn: gemini25FlashLite },
+
+        // TIER 2: Groq (Fast fallback)
+        { name: 'Llama 3.3 70B Versatile (Groq)', fn: groq33Versatile },
+        { name: 'Llama 3.1 8B Instant (Groq)', fn: groq31Instant },
 
         // TIER 3: OpenRouter (Ultimate safety net)
         { name: 'OpenRouter Llama 3.1 8B Free', fn: openrouterFree },

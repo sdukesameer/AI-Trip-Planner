@@ -1222,10 +1222,11 @@ function renderMyTripsList() {
         const item = document.createElement('div');
         item.className = 'saved-trip-item';
         const date = new Date(trip.savedAt).toLocaleDateString(LOCALE, { day: 'numeric', month: 'short', year: 'numeric' });
+        const tripSizeKB = Math.round(new Blob([JSON.stringify(trip)]).size / 1024);
         item.innerHTML = `
         <div style="flex:1;">
             <div class="saved-trip-name">${trip.locations.join(' + ')}</div>
-            <div class="saved-trip-meta">${trip.startDate} → ${trip.endDate} · Saved ${date}</div>
+            <div class="saved-trip-meta">${trip.startDate} → ${trip.endDate} · Saved ${date} · <span style="color:var(--accent);">${tripSizeKB} KB</span></div>
             ${trip.summary ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px;">${trip.summary.slice(0, 80)}…</div>` : ''}
         </div>
         <button class="saved-trip-del" data-idx="${idx}" title="Delete">✕</button>`;

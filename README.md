@@ -33,7 +33,7 @@
 AI Trip Planner generates a full day-by-day travel itinerary for any set of destinations (India-focused, internationally extensible) using large language models. It clusters nearby attractions geographically, schedules them in realistic time blocks (10 AM → 6 PM), estimates entry fees, and renders everything on an interactive map with commute suggestions.
 
 **Smart features:**
-- Multi-provider AI fallback (Groq → Gemini → OpenRouter)
+- Multi-provider AI fallback (Gemini → Groq → OpenRouter)
 - Location-aware image fetching (Unsplash + Picsum fallback)
 - Fuzzy duplicate detection (avoids "Taj Mahal" + "Taj Mahal Museum")
 - Session caching (survives navigation, clears on tab close)
@@ -56,7 +56,7 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 
 | Feature | Description |
 |---------|---|
-| 🤖 Multi-provider AI | Groq Llama 3.3 (fast) → Gemini 2.5 Flash (quality) → OpenRouter (safety net) with auto-fallback |
+| 🤖 Multi-provider AI | Gemini 2.5 Flash (quality) → Groq Llama 3.3 (fast) → OpenRouter (safety net) with auto-fallback |
 | 🗺️ Interactive Map | Leaflet + CartoDB tiles: pin-drop markers, day-focus overlay, polyline routes, rich popups |
 | 🌤️ Daily Weather | OpenWeatherMap integration: temp range, humidity, rain chance, wind speed (optional, non-blocking) |
 | 📅 Realistic Scheduling | Days start 10 AM, places ordered by `arrivalTime`, realistic visit durations computed cumulatively |
@@ -408,13 +408,13 @@ When approaching quota (81%+):
 `api.js` exports `smartAICall(prompt, config, onProviderSwitch)` which tries providers in order:
 
 ```
-Groq Llama 3.3 70B (Fastest)
-    ↓ [fails]
-Groq Llama 3.1 8B (Fast)
-    ↓ [fails]
 Gemini 2.5 Flash (Quality)
     ↓ [fails]
 Gemini 2.5 Flash Lite (Lite)
+    ↓ [fails]
+Groq Llama 3.3 70B (Fastest)
+    ↓ [fails]
+Groq Llama 3.1 8B (Fast)
     ↓ [fails]
 OpenRouter Llama 3.1 8B Free (Safety Net)
     ↓ [all fail → throw error]
