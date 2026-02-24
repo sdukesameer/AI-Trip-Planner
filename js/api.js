@@ -1,6 +1,6 @@
 // ============================================================
 //  api.js — AI provider abstraction with fallback chain
-\// ============================================================
+// ============================================================
 
 // ── AI Provider Definitions (CURRENT WORKING MODELS) ──────────────
 const AI_PROVIDERS = [
