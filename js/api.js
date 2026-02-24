@@ -4,15 +4,15 @@
 
 // ── AI Provider Definitions (CURRENT WORKING MODELS) ──────────────
 const AI_PROVIDERS = [
-    // TIER 1: Google Gemini (Quality First)
+    // TIER 1: Gemini 2.5 Flash — best quality, TTFT 0.37s. Free: 10 RPM / 250 RPD.
     { name: 'Gemini 2.5 Flash', model: 'gemini-2.5-flash', type: 'gemini' },
     { name: 'Gemini 2.5 Flash Lite', model: 'gemini-2.5-flash-lite', type: 'gemini' },
 
-    // TIER 2: Groq (Fast fallback)
+    // TIER 2: Groq — 1–3s full response, 14,400 req/day free. Catches Gemini 429s.
     { name: 'Llama 3.3 70B Versatile (Groq)', model: 'llama-3.3-70b-versatile', type: 'groq' },
     { name: 'Llama 3.1 8B Instant (Groq)', model: 'llama-3.1-8b-instant', type: 'groq' },
 
-    // TIER 3: OpenRouter (Ultimate safety net)
+    // TIER 3: OpenRouter — 50 req/day free (cut Apr 2025). Last resort only.
     { name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' },
 ];
 
@@ -24,7 +24,7 @@ const PROXY_AI = '/.netlify/functions/ai-proxy';
 const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
 
 const REQUEST_TIMEOUT_MS = 25000;       // direct provider calls (local dev)
-const PROXY_TIMEOUT_MS = 80000;       // proxy call (production) — proxy handles its own 20s per provider
+const PROXY_TIMEOUT_MS = 12000;       // proxy has 10s hard limit; 12s catches the 504 quickly then goes direct
 
 // Detect if we're running behind the Netlify proxy (production) or direct (local dev)
 function isProxied() {
@@ -59,7 +59,8 @@ async function callViaProxy(prompt) {
 async function smartAICall(prompt, config, onProviderSwitch) {
     const errors = [];
 
-    // Production: route through serverless proxy so keys stay server-side
+    // Production: try proxy first (keys stay server-side).
+    // If proxy 504s (Netlify free = 10s hard wall), silently fall through to direct calls.
     if (isProxied()) {
         if (onProviderSwitch) onProviderSwitch('Connecting to AI…');
         try {
@@ -68,8 +69,9 @@ async function smartAICall(prompt, config, onProviderSwitch) {
             if (onProviderSwitch) onProviderSwitch(lastProviderUsed);
             return data.text || '';
         } catch (err) {
-            if (onProviderSwitch) onProviderSwitch('Retrying with fallback…');
-            throw new Error('All AI providers failed via proxy:\n' + err.message);
+            console.warn('[proxy] failed, trying direct fallback:', err.message);
+            if (onProviderSwitch) onProviderSwitch('Retrying…');
+            // Falls through to the direct provider loop below
         }
     }
 

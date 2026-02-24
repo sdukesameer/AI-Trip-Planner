@@ -6,9 +6,6 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
-[functions."ai-proxy"]
-  timeout = 90
-
 [[redirects]]
   from = "/.netlify/functions/*"
   to = "/.netlify/functions/:splat"

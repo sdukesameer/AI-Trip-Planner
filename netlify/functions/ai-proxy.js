@@ -21,6 +21,7 @@ exports.handler = async (event, context) => {
     const openrouterKey = process.env.OPENROUTER_API_KEY;
 
     // Helper to add timeout to any provider call
+    const PROVIDER_TIMEOUT_MS = 8000;
     const withTimeout = (promise, ms, name) =>
         Promise.race([
             promise,
@@ -154,15 +155,17 @@ exports.handler = async (event, context) => {
 
     // ── Provider fallback chain (BEST → GOOD → FALLBACK) ──────────
     const providers = [
-        // TIER 1: Google Gemini (Quality First)
+        // TIER 1: Gemini 2.5 Flash — best quality, TTFT 0.37s, fits in 8s budget.
+        //   Free limits: 10 RPM, 250 RPD. Will 429 under load → falls to Groq.
         { name: 'Gemini 2.5 Flash', fn: gemini25Flash },
         { name: 'Gemini 2.5 Flash Lite', fn: gemini25FlashLite },
 
-        // TIER 2: Groq (Fast fallback)
+        // TIER 2: Groq — LPU hardware, 1–3s full response, 14,400 req/day free.
+        //   Catches Gemini 429s. Slightly lower quality but very reliable.
         { name: 'Llama 3.3 70B Versatile (Groq)', fn: groq33Versatile },
         { name: 'Llama 3.1 8B Instant (Groq)', fn: groq31Instant },
 
-        // TIER 3: OpenRouter (Ultimate safety net)
+        // TIER 3: OpenRouter — only 50 req/day on free tier (cut Apr 2025). Last resort.
         { name: 'OpenRouter Llama 3.1 8B Free', fn: openrouterFree },
     ];
 
@@ -173,7 +176,7 @@ exports.handler = async (event, context) => {
     // Try each provider in order
     for (const provider of providers) {
         try {
-            text = await withTimeout(provider.fn(prompt), 20000, provider.name);
+            text = await withTimeout(provider.fn(prompt), PROVIDER_TIMEOUT_MS, provider.name);
             if (text) {
                 providerUsed = provider.name;
                 console.log(`[ai-proxy] ✅ Success with ${provider.name}`);
