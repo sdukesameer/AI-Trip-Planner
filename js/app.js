@@ -534,6 +534,32 @@ function getSymmetricCounts() {
     return { cols, initialCount: cols * 2, loadMoreCount: cols };
 }
 
+// Shows a full-screen loading overlay, and optionally a spinner inside the target grid
+function showGridLoadingOverlay(targetElement) {
+    const existing = document.getElementById('grid-loading-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'grid-loading-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:400;cursor:wait;';
+    document.body.appendChild(overlay);
+
+    // Add spinner inside the target grid if provided
+    if (targetElement) {
+        const spinner = document.createElement('div');
+        spinner.className = 'grid-spinner';
+        spinner.style.cssText = 'grid-column:1/-1;display:flex;align-items:center;gap:10px;color:var(--text-muted);font-size:13px;padding:8px;';
+        spinner.innerHTML = `<span style="display:inline-block;width:16px;height:16px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;"></span> Loading places…`;
+        targetElement.appendChild(spinner);
+    }
+}
+
+// Hides the loading overlay and removes any spinners from the target grid
+function hideGridLoadingOverlay(targetElement) {
+    document.getElementById('grid-loading-overlay')?.remove();
+    targetElement?.querySelector('.grid-spinner')?.remove();
+}
+
 // ── Discovery Screen ──────────────────────────────────────────
 function renderDiscoveryScreen() {
     const grid = document.getElementById('discovery-grid');
@@ -586,6 +612,7 @@ function renderDiscoveryScreen() {
 
         // Auto-fill: if we have fewer than initialCount, keep fetching until 2 rows are full
         async function autoFill() {
+            showGridLoadingOverlay(cardRow);
             while (renderedCount < initialCount) {
                 const needed = initialCount - renderedCount;
                 const existingNames = state.places
@@ -602,9 +629,10 @@ function renderDiscoveryScreen() {
                         Object.assign(state.imageCache, imgs);
                     }
                     more.forEach(place => { renderPlaceCard(place, cardRow); renderedCount++; });
-                    if (more.length < needed) break; // API returned less than needed, stop
+                    if (more.length < needed) break;
                 } catch { break; }
             }
+            hideGridLoadingOverlay(cardRow);
         }
 
         // Only auto-fill if config allows AI calls
@@ -615,6 +643,7 @@ function renderDiscoveryScreen() {
         loadMoreBtn.addEventListener('click', async () => {
             loadMoreBtn.disabled = true;
             loadMoreBtn.innerHTML = '⏳ Loading…';
+            showGridLoadingOverlay(cardRow);
 
             if (hiddenPlaces.length >= loadMoreCount) {
                 // Full row from cache
@@ -627,6 +656,7 @@ function renderDiscoveryScreen() {
                 }
                 toReveal.forEach(place => renderPlaceCard(place, cardRow));
                 renderedCount += toReveal.length;
+                hideGridLoadingOverlay(cardRow);
                 loadMoreBtn.innerHTML = `⬇️ Load More Places in ${loc}`;
                 loadMoreBtn.disabled = false;
             } else {
@@ -645,8 +675,10 @@ function renderDiscoveryScreen() {
                 const stillNeeded = loadMoreCount - fromCache.length;
                 if (stillNeeded > 0) {
                     await loadMorePlaces(loc, section, loadMoreBtn, stillNeeded, cardRow);
+                    hideGridLoadingOverlay(cardRow);
                     renderedCount += stillNeeded;
                 } else {
+                    hideGridLoadingOverlay(cardRow);
                     loadMoreBtn.innerHTML = `⬇️ Load More Places in ${loc}`;
                     loadMoreBtn.disabled = false;
                 }
@@ -777,49 +809,125 @@ async function doNearbySearch() {
     if (!query) { showToast('Enter a place to search', 'info'); return; }
     if (!state.config.geminiKey && !state.config.groqKey) { showToast('No AI keys configured', 'error'); return; }
 
+    const { cols } = getSymmetricCounts();
     const resultsDiv = document.getElementById('nearby-results');
-    resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px;">🔍 Searching…</div>';
+    resultsDiv.innerHTML = `<div style="grid-column:1/-1;display:flex;align-items:center;gap:10px;color:var(--text-muted);font-size:13px;padding:8px;">
+        <span style="display:inline-block;width:16px;height:16px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;"></span>
+        Searching…
+    </div>`;
+    resultsDiv.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 
-    // Include selected locations in query for more accurate results
+    // Add spinner keyframe once
+    if (!document.getElementById('spin-style')) {
+        const s = document.createElement('style');
+        s.id = 'spin-style';
+        s.textContent = `@keyframes spin{to{transform:rotate(360deg)}}`;
+        document.head.appendChild(s);
+    }
+
+    // Disable background interaction while loading
+    const overlay = document.createElement('div');
+    overlay.id = 'search-loading-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:400;cursor:wait;';
+    document.body.appendChild(overlay);
+
+    const releaseOverlay = () => {
+        document.getElementById('search-loading-overlay')?.remove();
+    };
+
     const locContext = state.locations.length ? state.locations.join(', ') : '';
     const fullQuery = locContext ? `${query} near ${locContext}` : query;
-
     const onSwitch = name => showAIBadge(name);
+
     try {
         const results = await searchNearbyPlaces(state.config, fullQuery, onSwitch);
-        resultsDiv.innerHTML = '';
-        const { cols } = getSymmetricCounts();
-        resultsDiv.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-        // For nearby search: show exactly 1 row (cols tiles)
-        const nearbyToShow = results.slice(0, cols);
-        const nearbyHidden = results.slice(cols);
-        if (!nearbyToShow.length) { resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>'; return; }
 
-        // Fetch images with location context
-        // Fetch images for visible results only first
-        const imgItems = nearbyToShow.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext }));
+        if (!results.length) {
+            resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>';
+            releaseOverlay();
+            return;
+        }
+
+        // Add to state.places (dedup)
+        results.forEach(place => {
+            const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
+            if (!isDup) state.places.push(place);
+        });
+
+        // Show exactly 1 row (cols tiles), cache the rest
+        const toShow = results.slice(0, cols);
+        let hiddenNearby = results.slice(cols);
+
+        // Fetch images for first row
+        const imgItems = toShow.filter(p => !state.imageCache[p.name])
+            .map(p => ({ name: p.name, location: p.location || locContext }));
         if (imgItems.length) {
             const imgs = await fetchPlaceImages(imgItems, state.config.unsplashKey);
             Object.assign(state.imageCache, imgs);
         }
-        // Cache hidden results' images in background
-        if (nearbyHidden.length) {
-            fetchPlaceImages(nearbyHidden.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext })), state.config.unsplashKey)
-                .then(imgs => Object.assign(state.imageCache, imgs)).catch(() => { });
+
+        resultsDiv.innerHTML = '';
+        toShow.forEach(place => renderPlaceCard(place, resultsDiv, true));
+
+        // Auto-fill: if toShow < cols, fetch more to complete the row
+        async function autoFillNearby() {
+            let rendered = toShow.length;
+            while (rendered < cols) {
+                const needed = cols - rendered;
+                // First drain hidden cache
+                if (hiddenNearby.length) {
+                    const fromCache = hiddenNearby.splice(0, needed);
+                    const missing = fromCache.filter(p => !state.imageCache[p.name])
+                        .map(p => ({ name: p.name, location: p.location || locContext }));
+                    if (missing.length) {
+                        const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
+                        Object.assign(state.imageCache, imgs);
+                    }
+                    fromCache.forEach(place => renderPlaceCard(place, resultsDiv, true));
+                    rendered += fromCache.length;
+                    if (rendered >= cols) break;
+                }
+                // Then fetch from API
+                const existingNames = state.places.map(p => p.name);
+                try {
+                    const more = await fetchMorePlaces(state.config, fullQuery, existingNames, onSwitch, cols - rendered);
+                    if (!more?.length) break;
+                    more.forEach(place => {
+                        const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
+                        if (!isDup) state.places.push(place);
+                    });
+                    const moreImgs = more.filter(p => !state.imageCache[p.name])
+                        .map(p => ({ name: p.name, location: p.location || locContext }));
+                    if (moreImgs.length) {
+                        const imgs = await fetchPlaceImages(moreImgs, state.config.unsplashKey);
+                        Object.assign(state.imageCache, imgs);
+                    }
+                    more.forEach(place => renderPlaceCard(place, resultsDiv, true));
+                    rendered += more.length;
+                    if (more.length < cols - rendered + more.length) break;
+                } catch { break; }
+            }
+            releaseOverlay();
         }
 
-        nearbyToShow.forEach(place => {
-            const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
-            if (!isDup) state.places.push(place);
-            renderPlaceCard(place, resultsDiv, true);
-        });
-        nearbyHidden.forEach(place => {
-            const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
-            if (!isDup) state.places.push(place);
-        });
+        // Cache hidden results' images in background
+        if (hiddenNearby.length) {
+            fetchPlaceImages(
+                hiddenNearby.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext })),
+                state.config.unsplashKey
+            ).then(imgs => Object.assign(state.imageCache, imgs)).catch(() => { });
+        }
+
+        if (toShow.length < cols) {
+            autoFillNearby(); // async, overlay released inside
+        } else {
+            releaseOverlay();
+        }
+
         showToast(`Found ${results.length} places near "${query}"`, 'success');
     } catch (err) {
         resultsDiv.innerHTML = '';
+        releaseOverlay();
         showToast('Search failed: ' + err.message, 'error');
     }
 }
