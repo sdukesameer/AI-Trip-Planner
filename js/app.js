@@ -524,8 +524,6 @@ async function startPlanning() {
 // Returns the optimal initial fetch count and load-more count based on viewport columns
 function getSymmetricCounts() {
     const vw = window.innerWidth;
-    // Estimate columns based on minmax(160px, 1fr) grid
-    // We want 2 full rows initially (first row shows cols, then +cols*2 more = 3 rows total)
     let cols;
     if (vw <= 480) cols = 2;
     else if (vw <= 640) cols = 3;
@@ -533,13 +531,7 @@ function getSymmetricCounts() {
     else if (vw <= 1000) cols = 5;
     else if (vw <= 1200) cols = 6;
     else cols = 7;
-
-    // Initial: 1 row (cols) shown already from famous places fetch (8),
-    // but we render all. For load-more we want to add exactly `cols` items.
-    const loadMoreCount = cols;
-    // For initial display: show cols * 2 cards (2 full rows)
-    const initialCount = cols * 2;
-    return { cols, initialCount, loadMoreCount };
+    return { cols, initialCount: cols * 2, loadMoreCount: cols };
 }
 
 // ── Discovery Screen ──────────────────────────────────────────
@@ -558,13 +550,14 @@ function renderDiscoveryScreen() {
         section.dataset.location = loc;
         section.innerHTML = `<h3 class="section-title">📍 ${loc}</h3>`;
 
+        const { cols, initialCount, loadMoreCount } = getSymmetricCounts();
+
         const cardRow = document.createElement('div');
         cardRow.className = 'place-card-grid';
-        const { cols } = getSymmetricCounts();
         cardRow.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
         section.appendChild(cardRow);
 
-        const { initialCount, loadMoreCount } = getSymmetricCounts();
+        // Deduplicate
         const seenInSection = [];
         const allLocPlacesDeduped = [];
         locPlaces.forEach(place => {
@@ -573,15 +566,19 @@ function renderDiscoveryScreen() {
             allLocPlacesDeduped.push(place);
         });
 
-        // Show only initialCount (2 rows) initially
-        let shownCount = 0;
-        allLocPlacesDeduped.forEach((place, idx) => {
-            if (idx < initialCount) { renderPlaceCard(place, cardRow); shownCount++; }
-        });
-        // Store remaining for progressive reveal
-        let hiddenPlaces = allLocPlacesDeduped.slice(initialCount);
+        // Pre-selected (custom) places go first
+        const preSelected = allLocPlacesDeduped.filter(p => state.selectedPlaces.find(s => s.name === p.name));
+        const rest = allLocPlacesDeduped.filter(p => !state.selectedPlaces.find(s => s.name === p.name));
+        const ordered = [...preSelected, ...rest];
 
-        // Load More button — first reveals hidden cached places, then fetches from API
+        // Pad to fill exactly initialCount (cols * 2) slots — fetch more if needed
+        // All already-fetched places are cached; show first initialCount, cache the rest
+        const toShow = ordered.slice(0, initialCount);
+        let hiddenPlaces = ordered.slice(initialCount);
+
+        toShow.forEach(place => renderPlaceCard(place, cardRow));
+
+        // Load More button
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.className = 'load-more-btn';
         const updateLoadMoreLabel = () => {
@@ -590,27 +587,35 @@ function renderDiscoveryScreen() {
         updateLoadMoreLabel();
 
         loadMoreBtn.addEventListener('click', async () => {
-            if (hiddenPlaces.length > 0) {
-                // Reveal next `loadMoreCount` from already-fetched places
-                const toShow = hiddenPlaces.splice(0, loadMoreCount);
-                // Fetch images for any missing
-                const missing = toShow.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || loc }));
+            if (hiddenPlaces.length >= loadMoreCount) {
+                // Reveal next row from cache
+                const toReveal = hiddenPlaces.splice(0, loadMoreCount);
+                const missing = toReveal.filter(p => !state.imageCache[p.name])
+                    .map(p => ({ name: p.name, location: p.location || loc }));
                 if (missing.length) {
                     const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
                     Object.assign(state.imageCache, imgs);
                 }
-                toShow.forEach(place => renderPlaceCard(place, cardRow));
-                if (hiddenPlaces.length === 0) {
-                    // No more cached; next click will fetch from API
-                    updateLoadMoreLabel();
+                toReveal.forEach(place => renderPlaceCard(place, cardRow));
+            } else if (hiddenPlaces.length > 0) {
+                // Show remaining cache items (partial row), then fetch to fill
+                const toReveal = hiddenPlaces.splice(0);
+                const missing = toReveal.filter(p => !state.imageCache[p.name])
+                    .map(p => ({ name: p.name, location: p.location || loc }));
+                if (missing.length) {
+                    const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
+                    Object.assign(state.imageCache, imgs);
                 }
+                toReveal.forEach(place => renderPlaceCard(place, cardRow));
+                // Then fetch more from API to complete the row
+                await loadMorePlaces(loc, section, loadMoreBtn, loadMoreCount - toReveal.length, cardRow);
             } else {
-                // All cached places shown, fetch more from API
+                // Cache exhausted, fetch full row from API
                 await loadMorePlaces(loc, section, loadMoreBtn, loadMoreCount, cardRow);
             }
         });
-        section.appendChild(loadMoreBtn);
 
+        section.appendChild(loadMoreBtn);
         grid.appendChild(section);
     });
 
@@ -750,20 +755,32 @@ async function doNearbySearch() {
         resultsDiv.innerHTML = '';
         const { cols } = getSymmetricCounts();
         resultsDiv.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-        if (!results.length) { resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>'; return; }
+        // For nearby search: show exactly 1 row (cols tiles)
+        const nearbyToShow = results.slice(0, cols);
+        const nearbyHidden = results.slice(cols);
+        if (!nearbyToShow.length) { resultsDiv.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">No results found.</div>'; return; }
 
         // Fetch images with location context
-        const imgItems = results.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext }));
+        // Fetch images for visible results only first
+        const imgItems = nearbyToShow.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext }));
         if (imgItems.length) {
             const imgs = await fetchPlaceImages(imgItems, state.config.unsplashKey);
             Object.assign(state.imageCache, imgs);
         }
+        // Cache hidden results' images in background
+        if (nearbyHidden.length) {
+            fetchPlaceImages(nearbyHidden.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || locContext })), state.config.unsplashKey)
+                .then(imgs => Object.assign(state.imageCache, imgs)).catch(() => { });
+        }
 
-        results.forEach(place => {
+        nearbyToShow.forEach(place => {
             const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
             if (!isDup) state.places.push(place);
-            // Still render in nearby results even if already in main list (user may want to select it)
             renderPlaceCard(place, resultsDiv, true);
+        });
+        nearbyHidden.forEach(place => {
+            const isDup = state.places.some(p => placesAreSimilar(p.name, place.name));
+            if (!isDup) state.places.push(place);
         });
         showToast(`Found ${results.length} places near "${query}"`, 'success');
     } catch (err) {
