@@ -246,9 +246,9 @@ Return ONLY valid JSON array, no explanation, no markdown.`;
 }
 
 // ── API Call 1b: Fetch More Places ────────────────────────────
-export async function fetchMorePlaces(config, location, existingNames, onProviderSwitch) {
+export async function fetchMorePlaces(config, location, existingNames, onProviderSwitch, count = 6) {
     const exclude = existingNames.slice(0, 20).join(', ');
-    const prompt = `You are a travel expert. List 6 more famous tourist places in ${location} that are NOT already in this list: [${exclude}].
+    const prompt = `You are a travel expert. List ${count} more famous tourist places in ${location} that are NOT already in this list: [${exclude}].
 Sort by popularity. Each item: { "location": "${location}", "name": "<n>", "shortDesc": "<1 sentence>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>" }
 Return ONLY valid JSON array, no explanation.`;
     const text = await smartAICall(prompt, config, onProviderSwitch);
@@ -314,12 +314,20 @@ export async function fetchPlaceImages(placeItems, unsplashKey) {
             const fallbackQuery = cleanName;
 
             const tryFetch = async (query) => {
-                let url;
+                // Try proxy first in production, fall back to direct call
                 if (isProxied()) {
-                    url = `${PROXY_IMAGES}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape`;
-                } else {
-                    url = `${UNSPLASH_BASE}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&client_id=${unsplashKey}`;
+                    try {
+                        const proxyUrl = `${PROXY_IMAGES}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape`;
+                        const res = await fetch(proxyUrl);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.results?.length) return data.results;
+                        }
+                    } catch { /* proxy failed, fall through to direct */ }
                 }
+                // Direct call (local dev or proxy fallback)
+                if (!unsplashKey || unsplashKey.length <= 10) return [];
+                const url = `${UNSPLASH_BASE}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape&client_id=${unsplashKey}`;
                 const res = await fetch(url);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();

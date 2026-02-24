@@ -346,6 +346,14 @@ function initInputScreen() {
     document.getElementById('place-modal-close').addEventListener('click', closePlaceModal);
     document.getElementById('place-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closePlaceModal(); });
 
+    // Map popup "Details" button triggers place modal
+    window.addEventListener('map-place-detail', e => {
+        try {
+            const place = JSON.parse(e.detail);
+            openPlaceModal(place);
+        } catch { /* ignore */ }
+    });
+
     // Custom places toggle (home page)
     const customToggle = document.getElementById('home-custom-toggle');
     const customBody = document.getElementById('home-custom-body');
@@ -513,6 +521,27 @@ async function startPlanning() {
     } catch (err) { hideProgress(); showToast('Error: ' + err.message, 'error'); console.error(err); }
 }
 
+// Returns the optimal initial fetch count and load-more count based on viewport columns
+function getSymmetricCounts() {
+    const vw = window.innerWidth;
+    // Estimate columns based on minmax(160px, 1fr) grid
+    // We want 2 full rows initially (first row shows cols, then +cols*2 more = 3 rows total)
+    let cols;
+    if (vw <= 480) cols = 2;
+    else if (vw <= 640) cols = 3;
+    else if (vw <= 800) cols = 4;
+    else if (vw <= 1000) cols = 5;
+    else if (vw <= 1200) cols = 6;
+    else cols = 7;
+
+    // Initial: 1 row (cols) shown already from famous places fetch (8),
+    // but we render all. For load-more we want to add exactly `cols` items.
+    const loadMoreCount = cols;
+    // For initial display: show cols * 2 cards (2 full rows)
+    const initialCount = cols * 2;
+    return { cols, initialCount, loadMoreCount };
+}
+
 // ── Discovery Screen ──────────────────────────────────────────
 function renderDiscoveryScreen() {
     const grid = document.getElementById('discovery-grid');
@@ -533,18 +562,51 @@ function renderDiscoveryScreen() {
         cardRow.className = 'place-card-grid';
         section.appendChild(cardRow);
 
+        const { initialCount, loadMoreCount } = getSymmetricCounts();
         const seenInSection = [];
+        const allLocPlacesDeduped = [];
         locPlaces.forEach(place => {
             if (seenInSection.some(s => placesAreSimilar(s, place.name))) return;
             seenInSection.push(place.name);
-            renderPlaceCard(place, cardRow);
+            allLocPlacesDeduped.push(place);
         });
 
-        // Load More button
+        // Show only initialCount (2 rows) initially
+        let shownCount = 0;
+        allLocPlacesDeduped.forEach((place, idx) => {
+            if (idx < initialCount) { renderPlaceCard(place, cardRow); shownCount++; }
+        });
+        // Store remaining for progressive reveal
+        let hiddenPlaces = allLocPlacesDeduped.slice(initialCount);
+
+        // Load More button — first reveals hidden cached places, then fetches from API
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.className = 'load-more-btn';
-        loadMoreBtn.innerHTML = `⬇️ Load More Places in ${loc}`;
-        loadMoreBtn.addEventListener('click', () => loadMorePlaces(loc, section, loadMoreBtn));
+        const updateLoadMoreLabel = () => {
+            loadMoreBtn.innerHTML = `⬇️ Load More Places in ${loc}`;
+        };
+        updateLoadMoreLabel();
+
+        loadMoreBtn.addEventListener('click', async () => {
+            if (hiddenPlaces.length > 0) {
+                // Reveal next `loadMoreCount` from already-fetched places
+                const toShow = hiddenPlaces.splice(0, loadMoreCount);
+                // Fetch images for any missing
+                const missing = toShow.filter(p => !state.imageCache[p.name]).map(p => ({ name: p.name, location: p.location || loc }));
+                if (missing.length) {
+                    const imgs = await fetchPlaceImages(missing, state.config.unsplashKey);
+                    Object.assign(state.imageCache, imgs);
+                }
+                toShow.forEach(place => renderPlaceCard(place, cardRow));
+                if (hiddenPlaces.length === 0) {
+                    // No more cached; next click will fetch from API
+                    updateLoadMoreLabel();
+                }
+            } else {
+                // All cached places shown, fetch more from API
+                await loadMorePlaces(loc, section, loadMoreBtn, loadMoreCount, cardRow);
+            }
+        });
         section.appendChild(loadMoreBtn);
 
         grid.appendChild(section);
@@ -637,17 +699,19 @@ function renderPlaceCard(place, container, forNearby = false) {
     container.appendChild(card);
 }
 
-async function loadMorePlaces(loc, section, btn) {
+// Load more places for a location, either from cache or API if exhausted
+async function loadMorePlaces(loc, section, btn, count, cardRow) {
     if (!state.config.geminiKey && !state.config.groqKey) { showToast('No AI keys configured', 'error'); return; }
     const existingNames = state.places.filter(p => p.location?.toLowerCase().includes(loc.toLowerCase())).map(p => p.name);
+    const fetchCount = count || getSymmetricCounts().loadMoreCount;
     btn.disabled = true; btn.textContent = '⏳ Loading…';
 
     const onSwitch = name => showAIBadge(name);
     try {
-        const more = await fetchMorePlaces(state.config, loc, existingNames, onSwitch);
+        const more = await fetchMorePlaces(state.config, loc, existingNames, onSwitch, fetchCount);
         state.places.push(...more);
-        const cardRow = section.querySelector('.place-card-grid');
-        // Fetch images for new places
+        const targetRow = cardRow || section.querySelector('.place-card-grid');
+        // Reuse existing image cache first, fetch only missing
         const newItems = more
             .filter(p => !state.imageCache[p.name])
             .map(p => ({ name: p.name, location: p.location || loc }));
@@ -655,7 +719,7 @@ async function loadMorePlaces(loc, section, btn) {
             const imgs = await fetchPlaceImages(newItems, state.config.unsplashKey);
             Object.assign(state.imageCache, imgs);
         }
-        more.forEach(place => renderPlaceCard(place, cardRow));
+        more.forEach(place => renderPlaceCard(place, targetRow));
         btn.textContent = `⬇️ Load More Places in ${loc}`;
         btn.disabled = false;
         showToast(`Loaded ${more.length} more places in ${loc}`, 'success');
@@ -1259,7 +1323,7 @@ function loadSavedTrip(trip) {
     state.startDate = trip.startDate;
     state.endDate = trip.endDate;
     state.itinerary = trip.itinerary;
-    state.imageCache = trip.imageCache || {};
+    state.imageCache = { ...(trip.imageCache || {}) };  // shallow copy so we can extend
     state.aiProvider = '';
     closeModal('mytrips-modal');
     renderChips();

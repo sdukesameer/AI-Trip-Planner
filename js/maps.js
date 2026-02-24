@@ -96,15 +96,18 @@ function createPinIcon(number, color) {
 function buildPopup(place, day, color, locations = []) {
     const img = _imageCache[place.name] || '';
     const imgHtml = img
-        ? `<img src="${img}" style="width:100%;height:110px;object-fit:cover;border-radius:8px 8px 0 0;display:block;">`
+        ? `<img src="${img}" data-popup-img style="width:100%;height:110px;object-fit:cover;border-radius:8px 8px 0 0;display:block;cursor:zoom-in;" title="Click for details">`
         : '';
-    // Use text-based query (name + city) — far more useful than raw coordinates
     const city = place.location || locations[0] || '';
     const gmapQ = encodeURIComponent([place.name, city].filter(Boolean).join(' '));
     const gmapUrl = `https://www.google.com/maps/search/?api=1&query=${gmapQ}`;
     const gmapBtn = `<a href="${gmapUrl}" target="_blank" rel="noopener"
         style="display:inline-block;margin-top:8px;padding:4px 12px;background:${color};color:#fff;border-radius:999px;font-size:11px;text-decoration:none;font-weight:600;">
         🗺️ Google Maps</a>`;
+    // "Details" button triggers place-modal via custom event
+    const detailBtn = `<button onclick="window.dispatchEvent(new CustomEvent('map-place-detail',{detail:${JSON.stringify(JSON.stringify(place))}}))"
+        style="display:inline-block;margin-top:8px;margin-left:6px;padding:4px 12px;background:transparent;color:${color};border:1.5px solid ${color};border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;">
+        ℹ️ Details</button>`;
 
     const arrTime = place.arrivalTime ? `<span style="font-size:11px;font-weight:700;color:${color};">${place.arrivalTime}</span>  ` : '';
     const dur = place.visitDuration ? `<span style="font-size:10px;color:#888;">⌛ ${place.visitDuration}</span>` : '';
@@ -116,8 +119,9 @@ function buildPopup(place, day, color, locations = []) {
         <div style="font-size:11px;color:#888;margin-bottom:4px;">Day ${day.day} · ${day.theme || ''} ${dur}</div>
         ${place.openingHours ? `<div style="font-size:11px;color:#aaa;">⏰ ${place.openingHours}</div>` : ''}
         ${place.entryFee ? `<div style="font-size:11px;color:#aaa;">💰 ${place.entryFee}</div>` : ''}
+        ${place.desc ? `<div style="font-size:11px;color:#aaa;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${place.desc}</div>` : ''}
         ${place.closedNote ? `<div style="font-size:11px;color:#f59e0b;margin-top:4px;">⚠️ ${place.closedNote}</div>` : ''}
-        ${gmapBtn}
+        <div style="display:flex;flex-wrap:wrap;gap:4px;">${gmapBtn}${detailBtn}</div>
       </div>
     </div>`;
 }
