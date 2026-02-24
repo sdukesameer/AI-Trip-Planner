@@ -179,7 +179,7 @@ exports.handler = async (event, context) => {
             text = await withTimeout(provider.fn(prompt), PROVIDER_TIMEOUT_MS, provider.name);
             if (text) {
                 providerUsed = provider.name;
-                console.log(`[ai-proxy] ✅ Success with ${provider.name}`);
+                console.log(`[ai-proxy] ✅ Success with ${provider.name} | Tried: ${errorDetails.length} before it`);
                 break;
             }
         } catch (err) {
