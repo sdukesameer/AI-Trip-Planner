@@ -21,7 +21,7 @@ exports.handler = async (event, context) => {
     const openrouterKey = process.env.OPENROUTER_API_KEY;
 
     // Helper to add timeout to any provider call
-    const PROVIDER_TIMEOUT_MS = 8000;
+    const PROVIDER_TIMEOUT_MS = 9000;
     const withTimeout = (promise, ms, name) =>
         Promise.race([
             promise,

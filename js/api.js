@@ -24,7 +24,7 @@ const PROXY_AI = '/.netlify/functions/ai-proxy';
 const PROXY_IMAGES = '/.netlify/functions/unsplash-proxy';
 
 const REQUEST_TIMEOUT_MS = 25000;       // direct provider calls (local dev)
-const PROXY_TIMEOUT_MS = 12000;       // proxy has 10s hard limit; 12s catches the 504 quickly then goes direct
+const PROXY_TIMEOUT_MS = 9000;       // proxy has 10s hard limit; 12s catches the 504 quickly then goes direct
 
 // Detect if we're running behind the Netlify proxy (production) or direct (local dev)
 function isProxied() {
@@ -50,6 +50,10 @@ async function callViaProxy(prompt) {
             throw new Error(msg);
         }
         return await res.json();
+    } catch (err) {
+        // Normalize AbortError so it doesn't bleed a cancelled signal into direct calls
+        if (err.name === 'AbortError') throw new Error('Proxy timed out');
+        throw err;
     } finally {
         clearTimeout(timeout);
     }
@@ -519,10 +523,13 @@ export async function fetchWeatherForDays(days) {
         if (!day.location || !day.date) return;
         const dayDate = new Date(day.date);
         if (dayDate > cutoff) return;
-        (cityDates[day.location] = cityDates[day.location] || []).push(day.date);
+        // Sanitize: take only first segment before & / , to get a clean city name
+        const cleanCity = day.location.split(/[&,]/)[0].trim();
+        if (!cleanCity) return;
+        (cityDates[cleanCity] = cityDates[cleanCity] || []).push({ date: day.date, rawLocation: day.location });
     });
 
-    await Promise.all(Object.entries(cityDates).map(async ([city, dates]) => {
+    await Promise.all(Object.entries(cityDates).map(async ([city, entries]) => {
         const cacheKey = `wx_${city}`;
         let forecasts = _weatherCache.get(cacheKey);
 
@@ -535,7 +542,7 @@ export async function fetchWeatherForDays(days) {
             } catch { return; }
         }
 
-        dates.forEach(date => {
+        entries.forEach(({ date }) => {
             const match = (forecasts || []).find(f => f.date === date);
             if (match) results[date] = match;
         });
