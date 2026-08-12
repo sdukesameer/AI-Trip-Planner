@@ -30,9 +30,18 @@
 
 ## Overview
 
-AI Trip Planner generates a full day-by-day travel itinerary for any set of destinations (India-focused, internationally extensible) using large language models. It clusters nearby attractions geographically, schedules them in realistic time blocks (10 AM → 6 PM), estimates entry fees, and renders everything on an interactive map with commute suggestions.
+AI Trip Planner generates a full day-by-day travel itinerary for any set of destinations (India-focused, internationally extensible) using large language models.
+
+Crucially, **the geography is not left to the model**. Candidate places are clustered into one
+neighbourhood per day in code (k-means++), each day is ordered to minimise backtracking (2-opt),
+and only then is the model asked to schedule and describe the result. It cannot scatter a zone
+across the week. Real road distances and travel times come from OSRM, and everything renders on
+an interactive map with the actual route drawn.
 
 **Smart features:**
+- Zone-first planning: deterministic clustering + route optimisation, verified after generation
+- Stay/hotel anchor so every day starts and ends where you're sleeping
+- Real road routing and per-day travel time, distance and fare
 - Multi-provider AI fallback (Gemini 2.5 Flash → Gemini 2.5 Flash Lite → Groq → OpenRouter)
 - Location-aware image fetching (Unsplash + Picsum fallback)
 - Fuzzy duplicate detection (avoids "Taj Mahal" + "Taj Mahal Museum")
@@ -60,23 +69,41 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 | 🗺️ Interactive Map | Leaflet + CartoDB tiles: pin-drop markers, day-focus overlay, polyline routes, rich popups |
 | 🌤️ Daily Weather | OpenWeatherMap integration: temp range, humidity, rain chance, wind speed (optional, non-blocking) |
 | 📅 Realistic Scheduling | Days start 10 AM, places ordered by `arrivalTime`, realistic visit durations computed cumulatively |
-| 📍 Geographic Clustering | AI groups places within ~5 km radius on the same day; smart routing minimises backtracking |
+| 📍 Geographic Clustering | Done in code (k-means++ + 2-opt), not requested from the model — see [Zone-First Planning](#zone-first-planning) |
 | 🔍 Place Discovery | Photon geocode "Search Nearby" + AI enrichment; Nominatim for coordinate lookup |
 | 🎯 Custom Places | Pre-seed from home screen textarea or paste list in discovery screen; AI auto-enriches names |
 | 📸 Place Images | Unsplash API with context-aware queries (place name + city); Picsum fallback; SVG placeholder |
 | 💾 Save & Share | localStorage (up to 5 trips, ~30 KB each); URL hash encoding for sharing; trip load/restore |
 | 📄 Rich PDF Export | jsPDF: place thumbnails, coloured day banners, commute info, entry fee breakdown, weather badges |
 | 📋 Emoji Copy Text | WhatsApp-friendly itinerary with flag emojis, time slots, → arrows, metadata |
-| 💰 Budget Estimator | Per-day entry fee tally (tickets only, travel excluded); cost breakdown in accordion headers |
+| 💰 Budget Estimator | Tickets + food + transport + stay, per day and whole trip, scaled by group size |
 | 🌙 Dark/Light Theme | Persisted in localStorage (`atp_theme`); Leaflet tiles & CSS vars adapt automatically |
 | 📱 Mobile Responsive | Full 480px breakpoint with stacked layouts, optimised touch targets, readable text |
 | ⚡ Session Caching | AI responses cached in `sessionStorage` with composite key; survives screen navigation |
 | 🔢 Progressive Place Grid | Initial 2 rows shown per location; "Load More" reveals cached then fetches fresh from API |
 | 🔁 Collapsible Commute | Getting-there info collapsed by default per place row; expands to show walk/cab/metro detail |
 | 🎯 Auto Place Mode | User selects places manually OR enables "AI picks the best" (smart dedup, geo-context aware) |
-| ⌨️ Keyboard Shortcuts | Ctrl+S → Save, Ctrl+D → PDF, Esc → Close all modals |
-| 🔐 Secure Keys | No API keys in browser; server-side proxy (Netlify functions) keeps secrets safe |
+| ⌨️ Keyboard Shortcuts | Ctrl+S → Save, Ctrl+D → PDF, Esc → Close top modal, ↑/↓ + Enter in autocomplete |
+| 🔐 Secure Keys | No API keys ever reach the browser; all provider calls go through Netlify functions |
 | 📊 Storage Meter | Visual quota indicator in "My Trips" modal with colour-coded bar (green/amber/red) |
+| ⚙️ Trip Preferences | Pace, budget level, day start time, group size, kids, step-free access, interests, "avoid" list — all fed into the prompt and persisted |
+| 🏷️ Category Filters | Filter the discovery grid by category, or show only your selections |
+| ✂️ Editable Itinerary | Reorder, move between days, swap, note or remove any stop; budget, routes and pins recompute instantly |
+| 📅 Calendar Export | One-click `.ics` download with timed events, locations and GEO coordinates |
+| 🖨️ Print Layout | Dedicated print stylesheet — every day expands, chrome and map are stripped |
+| 📏 Per-Day Distance | Real road distance and travel time shown on each day header |
+| ↩️ Back Button | Browser back/forward moves between the three screens instead of leaving the app |
+| 📴 Offline Shell | Service worker caches the app shell so saved trips open without a connection |
+| ♿ Accessibility | Focus-trapped modals, keyboard-operable cards and accordions, ARIA live regions, `prefers-reduced-motion` |
+| 🧭 Zone-first planning | Places are clustered into one neighbourhood per day **in code** (k-means + 2-opt), then the model only schedules them — it cannot scatter a zone across the week |
+| 🏨 Stay anchor | Give your hotel/area and every day starts and ends there, with the nearest zone planned first |
+| 🛣️ Real road routing | OSRM road distance, duration and drawn route per day; graceful straight-line fallback |
+| 🚇 Transport modes | Walking / public transport / taxi / self-drive / mixed — changes the plan, the advice and the fare estimates |
+| 💰 Full budget | Tickets + food + local transport + stay, scaled by group size, in 8 currencies |
+| 🍽️ Meal slots | Breakfast/lunch/dinner suggested along each day's route with approximate cost |
+| ✏️ Full editing | Reorder, move between days, swap for a nearby alternative, add notes, re-plan or re-optimise a single day |
+| 🎒 Packing list | Generated from your dates, forecast and planned activities, with saved checkboxes |
+| 🌐 Local info | Emergency numbers, plug type, tipping, transport tips, etiquette and useful phrases |
 
 ---
 
@@ -94,6 +121,8 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 | **Images** | [Unsplash API](https://unsplash.com/developers) + Picsum fallback |
 | **Weather** | [OpenWeatherMap API](https://openweathermap.org/api) (optional, non-blocking) |
 | **Geocoding** | [Photon API](https://photon.komoot.io/) for autocomplete; [Nominatim](https://nominatim.openstreetmap.org/) for coordinate lookup (both OSM-backed, no key) |
+| **Routing** | [OSRM](https://project-osrm.org/) public demo server (road distance, duration, geometry) |
+| **Planning** | In-house k-means++ clustering and 2-opt route optimisation (`js/planner.js`) — no dependency |
 | **PDF Export** | [jsPDF](https://github.com/parallax/jsPDF) 2.5.1 (CDN) |
 | **Deployment** | [Netlify](https://netlify.com/) (static hosting + serverless functions) |
 
@@ -102,30 +131,37 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 ## Project Structure
 
 ```
-AI-Trip-Planner-main/
+AI-Trip-Planner/
 ├── index.html              # Single-page app shell (3 screens + modals)
-├── build-env.js            # Netlify build script: env vars → js/env.js
-├── netlify.toml            # Netlify config (build command, functions)
+├── build-env.js            # Netlify build script: env vars → js/app-config.js (flags only)
+├── netlify.toml            # Netlify config (build, functions, CSP + security headers)
+├── sw.js                   # Service worker: offline app shell
 │
 ├── css/
-│   ├── style.css           # Global tokens, resets, typography, theme variables
-│   └── components.css      # Component-level styles (accordion, map, modals)
+│   ├── style.css           # Global tokens, resets, a11y helpers, print styles
+│   └── components.css      # Component-level styles (accordion, map, modals, cards)
 │
 ├── js/
-│   ├── env.js              # API keys (git-ignored; generated at build or edited locally)
+│   ├── env.js              # Committed placeholder — never contains secrets
+│   ├── env.local.js        # (git-ignored, optional) real keys for direct-provider local dev
+│   ├── app-config.js       # Generated at build: capability flags, no secrets
+│   ├── util.js             # Escaping, timezone-safe dates, geo, concurrency, focus trap
+│   ├── planner.js          # ★ Zone clustering (k-means++), route optimisation (2-opt), validation
+│   ├── routing.js          # OSRM road routing, transport modes, fare model
+│   ├── budget.js           # Currency handling + whole-trip cost breakdown
 │   ├── app.js              # ★ Main orchestrator: state, screen routing, UI logic
-│   ├── api.js              # AI providers + JSON repair; place discovery, itinerary gen
+│   ├── api.js              # AI providers + JSON repair; discovery, scheduling, packing, local info
 │   ├── maps.js             # Leaflet: markers, popups, focus, polylines, theme swap
-│   └── download.js         # Export: emoji clipboard + rich PDF with jsPDF
+│   └── download.js         # Export: clipboard, text, .ics calendar, rich PDF
 │
 ├── netlify/functions/
+│   ├── _shared.js          # Origin allow-list, rate limiting, response helpers
 │   ├── ai-proxy.js         # Server-side AI calls (keeps keys safe)
 │   ├── unsplash-proxy.js   # Unsplash image search (proxy for key safety)
 │   └── weather-proxy.js    # OpenWeatherMap forecast (proxy for key safety)
 │
 ├── manifest.json           # PWA manifest (icons, metadata)
-├── package.json            # npm deps (only dev server + build script)
-├── .gitignore              # Excludes node_modules, env vars
+├── .gitignore              # Excludes node_modules and js/env.local.js
 └── README.md               # This file
 ```
 
@@ -273,7 +309,11 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 | `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | ❌ No | ✅ 50 req/hr |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap API key | ❌ No (optional) | ✅ 1,000 req/day |
 
-> **Security:** Keys are **never** exposed to the browser. `build-env.js` injects client-side keys (Gemini, Groq, OpenRouter, Unsplash) into `js/env.js` at build time for local dev fallback. Production requests route through Netlify serverless functions (`ai-proxy.js`, `unsplash-proxy.js`, `weather-proxy.js`), keeping keys server-side. The OpenWeather key is server-side only and never appears in `js/env.js`.
+> **Security:** Keys are **never** written into any file under the publish directory. `build-env.js` emits `js/app-config.js` containing only boolean capability flags (`hasAI`, `hasImages`, `hasWeather`). Every provider request in production goes through the Netlify serverless functions (`ai-proxy.js`, `unsplash-proxy.js`, `weather-proxy.js`), which read the keys from the server environment.
+>
+> ⚠️ **If you deployed a build before this change**, `js/env.js` was generated *with your real keys* and served publicly at `https://<your-site>/js/env.js`. **Rotate every key** listed above before redeploying.
+>
+> The functions also reject requests whose `Origin`/`Referer` isn't this site and apply a per-IP rate limit, so the endpoints can't be used as a free public AI gateway. Add extra allowed hosts (a custom domain, for example) with the optional `ALLOWED_ORIGINS` env var, comma-separated.
 
 ### Getting API Keys
 
@@ -292,37 +332,53 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 ## Local Development
 
 ### Prerequisites
-- Node.js 14+ (for dev server only)
+- Node.js 18+ (for `netlify dev`; any static server works otherwise)
 - Git
 
-### Setup
+### Option A — `netlify dev` (recommended: exercises the real serverless functions)
 
 ```bash
-# 1. Clone repository
 git clone https://github.com/sdukesameer/AI-Trip-Planner.git
 cd AI-Trip-Planner
 
-# 2. Install dev dependencies
-npm install
+npm install -g netlify-cli
 
-# 3. Configure local API keys
-# Edit js/env.js and replace placeholders with your keys:
-# - PASTE_YOUR_GEMINI_KEY_HERE     → your Gemini API key (primary)
-# - PASTE_YOUR_GROQ_KEY_HERE       → your Groq API key (optional fallback)
-# - PASTE_YOUR_UNSPLASH_KEY_HERE   → your Unsplash key (optional)
-# Note: OPENWEATHER_API_KEY is server-side only; weather won't work in local dev
+# Provide the keys the way production does — as environment variables.
+export GEMINI_API_KEY=...
+export GROQ_API_KEY=...            # optional
+export OPENROUTER_API_KEY=...      # optional
+export UNSPLASH_ACCESS_KEY=...     # optional
+export OPENWEATHER_API_KEY=...     # optional
 
-# 4. Start dev server (hot reload, no build step)
-npm run dev
-
-# Visit http://localhost:3000
+netlify dev      # http://localhost:8888 — functions and weather both work
 ```
+
+### Option B — plain static server (calls the AI providers directly from the browser)
+
+```bash
+# Create js/env.local.js — it is git-ignored and MUST NOT be committed.
+cat > js/env.local.js <<'EOF'
+export const ENV_KEYS = {
+  geminiKey:     'your-gemini-key',
+  groqKey:       'your-groq-key',       // optional
+  openrouterKey: 'your-openrouter-key', // optional
+  unsplashKey:   'your-unsplash-key',   // optional
+};
+EOF
+
+python3 -m http.server 8000     # or: npx serve .
+# Visit http://localhost:8000
+```
+
+> `js/env.js` is committed and intentionally empty — **never** put keys in it. Weather needs a serverless
+> function, so it only works under Option A. Without either option the app shows a banner explaining
+> that no AI provider is configured.
 
 ### Development Tips
 
 - **No build step required** — app uses native ES modules
-- **Hot reload** — changes reflected instantly
 - **Console errors** — check browser DevTools for AI provider fallback logs
+- **Service worker** — registration is skipped on `localhost`, so you never fight a stale cache while developing
 - **Session storage** — inspect `sessionStorage` in DevTools → Application tab (keys prefixed `atp_`)
 - **Local storage** — saved trips visible in `localStorage` → `atp_saved_trips`; theme in `atp_theme`
 - **Throttle network** → DevTools → Network → "Slow 3G" to test graceful degradation
@@ -356,12 +412,15 @@ git push origin main
 
 ### Build Process
 ```
-git push → Netlify receives webhook → npm run build (= node build-env.js)
-→ build-env.js reads env vars → writes js/env.js (gemini/groq/openrouter/unsplash only)
+git push → Netlify receives webhook → node build-env.js
+→ writes js/app-config.js  { hasAI, hasImages, hasWeather }   ← flags only, no secrets
+→ resets js/env.js to an empty placeholder
 → deploys static site + serverless functions
 ```
 
-> **Note:** `js/env.js` is **never** committed to git (in `.gitignore`). It is generated fresh at build time. The `OPENWEATHER_API_KEY` is only ever read by the serverless `weather-proxy.js` function and is never written to `js/env.js`.
+> **Note:** every API key is read exclusively by the serverless functions from the Netlify
+> environment. Nothing under the publish directory (`.`) ever contains a secret — which matters,
+> because everything there is downloadable by anyone.
 
 ---
 
@@ -474,21 +533,47 @@ Survives screen navigation within same browser tab. Clears on tab close. Keyed s
 
 On the discovery screen, each location section shows an initial 2 rows of cards (column count matches the CSS grid columns, computed by `getSymmetricCounts()` based on viewport width). The "Load More" button first reveals already-fetched places, then calls `fetchMorePlaces()` to get additional ones from the AI when the local cache is exhausted.
 
-### Geographic Clustering
+### Zone-First Planning
 
-The itinerary prompt includes concrete examples:
+Earlier versions *asked* the model to "group places within ~5 km" and nothing verified that it had.
+It frequently didn't, and the result was days that criss-crossed the city.
+
+The geography is now decided in code, before the model is involved at all:
+
 ```
-India Gate + Rajpath + War Memorial → SAME DAY (all within 1 km)
-Red Fort + Chandni Chowk + Jama Masjid → SAME DAY (cluster)
-Qutub Minar + Mehrauli Park → SAME DAY (5 km apart)
+1. Discovery returns each place with real lat/lng
+2. Bucket places by city; split the trip's days between cities by place count
+3. k-means++ clusters each city's places into one zone per day  (js/planner.js)
+4. Balance the clusters so no day gets 9 stops and another gets 1
+5. Order the zones — nearest the stay first, then nearest-neighbour between centroids
+6. Order each day internally: nearest-neighbour tour + 2-opt improvement
+7. THEN the model receives fixed days with fixed places in a fixed order,
+   and may only add times, descriptions, fees, opening hours and meal breaks
 ```
 
-AI is instructed to group places within ~5 km and compute `arrivalTime` cumulatively:
+Step 7's prompt states explicitly: *"Do NOT add, remove, reorder or move any place between days."*
+The response is then merged back **by name** onto the planner's own list, so even if the model
+ignores the instruction, its ordering is discarded and ours survives.
+
+Real example — 12 Delhi landmarks over 3 days:
+
 ```
-Place 1: arrivalTime = 10:00 AM
-Place 2: arrivalTime = 10:00 + 2 hrs (visit) + 30 min (transit) = 12:30 PM
-Place 3: arrivalTime = 12:30 + 1.5 hrs (visit) + 20 min (transit) = 2:20 PM
+Day 1 (3.6 km spread): Chandni Chowk → Jama Masjid → Red Fort → Raj Ghat     [Old Delhi]
+Day 2 (8.9 km spread): Rashtrapati Bhavan → India Gate → Humayun's Tomb      [Central]
+Day 3 (3.8 km spread): Hauz Khas → Qutub Minar → Mehrauli Park               [South]
 ```
+
+Clustering is seeded deterministically, so re-planning the same trip produces the same zones.
+`validateItinerary()` then re-checks the finished plan and surfaces any day that still spans
+too far, any duplicate place, and any empty day in the UI.
+
+### Travel Times and Costs
+
+Each day's ordered stops go to OSRM in a single request, which returns per-leg road distance,
+duration and the route geometry drawn on the map. If OSRM is rate-limited or down, legs fall back
+to haversine distance × a per-mode detour factor, and the UI says so rather than presenting an
+estimate as measured. Fares come from a per-mode cost model (`js/routing.js`), with public
+transport charged per head and taxis charged per vehicle.
 
 ### Map Safety
 
@@ -580,21 +665,21 @@ Math.round(new Blob([localStorage.getItem('atp_saved_trips') || '']).size / 1024
 
 ### Phase 1 — High Impact
 
-- [ ] **Offline mode** (Service Worker + IndexedDB)
-  - Cache itinerary + images for offline viewing
-  - Sync saved trips when back online
-  - Impact: 🔴 Essential for field use
+- [x] **Offline mode** (Service Worker) — *shipped in v2.0.0*
+  - App shell + visited assets cached; saved trips open without a connection
+  - Still open: IndexedDB storage and background sync of saved trips
 
-- [ ] **Google Calendar export**
-  - Create calendar events for each place with reminders
-  - Include location + commute time
-  - Impact: 🔴 High workflow integration
+- [x] **Calendar export** — *shipped in v2.0.0*
+  - `.ics` download with timed `VEVENT`s, `LOCATION` and `GEO` coordinates
+  - Still open: direct Google Calendar API push with reminders
 
-- [ ] **Travel constraints filters**
-  - Wheelchair-accessible places only
-  - Vegetarian/vegan restaurant spots
-  - Budget tier selection (budget/mid/luxury)
-  - Impact: 🔴 Accessibility + inclusivity
+- [x] **Travel constraints filters** — *shipped in v2.0.0*
+  - Step-free access, travelling-with-kids, budget tier, pace, interests, "avoid" list
+  - Still open: dietary filters (vegetarian/vegan restaurant spots)
+
+- [x] **Zone-first planning + real routing** — *shipped in v2.1.0*
+  - Deterministic clustering, stay anchor, OSRM road distances, transport modes
+  - Still open: self-hosted OSRM so routing isn't dependent on the public demo server
 
 ### Phase 2 — Medium Impact
 
@@ -604,10 +689,13 @@ Math.round(new Blob([localStorage.getItem('atp_saved_trips') || '']).size / 1024
   - Real-time entry fees
   - Budget breakdown + alerts
 
-- [ ] **Trip statistics dashboard**
-  - Total km traveled (from place coords)
-  - Average daily budget
-  - Best photo (Unsplash highest-rated)
+- [x] **Trip statistics** — *shipped in v2.1.0*
+  - Per-day and trip-wide road distance, travel time and cost; full budget breakdown by category
+  - Still open: best photo (Unsplash highest-rated)
+
+- [ ] **Drag-and-drop reordering**
+  - v2.1.0 ships move-up/move-down/move-to-day via an action sheet, which works on touch
+  - Pointer-based dragging would be faster on desktop
 
 - [ ] **Multi-user trip editing** (beta)
   - Shareable edit link (not just view)
@@ -840,7 +928,93 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 
 ## Changelog
 
-### v1.2.0 (Current)
+### v2.1.0 (Current) — zone-first planning, real routing, editable itineraries
+
+#### Planning
+
+- 🧭 **Geography is now decided in code, not requested from the model.** k-means++ clusters places into one zone per day and 2-opt orders each day; the model only schedules and describes what it is given, and its ordering is discarded on merge. See [Zone-First Planning](#zone-first-planning).
+- 🏨 **Stay anchor** — give a hotel or area and every day starts and ends there, nearest zone first. Geocoded via OpenStreetMap, with an AI fallback.
+- ⚖️ Multi-city day allocation is proportional to place count (a 2-place city no longer gets as many days as a 12-place one)
+- 🔍 Plan validation surfaces over-spread days, duplicates and empty days instead of shipping them silently
+- 🎲 Clustering is deterministically seeded — re-planning the same trip gives the same zones
+
+#### Transport
+
+- 🛣️ Real road distance, duration and drawn route per day via OSRM, with a labelled straight-line fallback
+- 🚇 Transport mode (walk / transit / taxi / self-drive / mixed) changes the plan, the advice and the fares
+- 🚕 Per-leg and per-day travel time, distance and fare estimates
+
+#### Editing
+
+- ✏️ Per-stop action sheet: move earlier/later, move to another day, swap for a nearby alternative, add a note, remove
+- 🔄 Re-plan a single day, or re-optimise its order without another AI call
+- Moving a place into a day re-optimises that day automatically
+
+#### Trip essentials
+
+- 💰 Full budget: tickets + food + local transport + stay, scaled by group size, across 8 currencies
+- 🍽️ Meal slots suggested along each day's route
+- 🎒 Weather- and activity-aware packing list with saved checkboxes
+- 🌐 Local info: emergency numbers, plug type, tipping, transport, etiquette, phrases
+- ♿ Accessibility warnings surfaced per place when step-free access is required
+
+#### Fixes
+
+- 🐛 Category filter chips offered categories whose cards hadn't rendered yet, so selecting one showed nothing
+- 🐛 Entry fees using Indian digit grouping (`₹12,50,000`) parsed as `12`
+- 📱 iOS Safari zoomed the page when focusing a preference dropdown (`.pref-field .input-field` out-specified the 16px mobile rule); same on iPad for date/location inputs
+- 📱 Tap targets below 40px: map link, remove button, filter/interest chips, day legend, Leaflet zoom controls
+- 📱 Navbar wordmark wrapped to two lines at 320px
+
+### v2.0.0 — security, correctness & UX overhaul
+
+#### Security
+
+- 🔐 **API keys no longer published.** `build-env.js` used to write the real Gemini/Groq/OpenRouter/Unsplash keys into `js/env.js`, which Netlify serves publicly. It now emits `js/app-config.js` with capability flags only. **Rotate any keys used by an earlier deploy.**
+- 🔐 XSS fixed: all AI output, place names and share-link payloads are HTML-escaped; share-link data is type-validated and clamped
+- 🔐 Content-Security-Policy (no `unsafe-inline` scripts), `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP
+- 🔐 Serverless functions now enforce an origin allow-list, per-IP rate limits and payload size caps — the AI proxy was previously an open, unauthenticated gateway to the keys
+- 🔐 Inline `onerror=` handlers replaced with a delegated listener so the CSP can forbid inline scripts
+
+#### Bug fixes
+
+- 🐛 Auto-mode dimming never applied — the CSS targeted `.discovery-grid.auto-mode` but the element only had `auto-mode`
+- 🐛 Map pins mis-aligned: places without coordinates shifted every later marker, so clicking a row focused the wrong pin
+- 🐛 Timezone bugs: `toISOString()` and `valueAsDate` shifted trip dates by a day outside GMT; all calendar maths is now local-date based
+- 🐛 "Load More" did nothing for a location that returned no places (its handler was registered after an early `return`)
+- 🐛 Grid columns were set inline and never recalculated on resize
+- 🐛 `searchNearbyPlaces` built an `AbortController` it never passed to a request, so its timeout never fired
+- 🐛 The map's global click listener was re-registered on every generation, firing duplicate events
+- 🐛 Text/PDF downloads revoked the blob URL synchronously, which aborts the download in Firefox
+- 🐛 The AI could repeat the same place across days; duplicates are now dropped
+- 🐛 Entry-fee parsing mis-read `₹1,200` as `1`
+- 🐛 Saving the same trip twice created duplicate entries; quota overflow now drops the oldest trips instead of failing
+- 🐛 "Clear All" deleted every saved trip with no confirmation
+- 🐛 Loading a saved trip left the discovery screen empty, so "Edit Places" was broken
+- 🐛 In auto mode, clicking a card was silently ignored — it now switches auto off and selects
+- 🐛 The spinner keyframe was injected only by nearby-search, so other spinners never animated
+
+#### Performance
+
+- ⚡ Unsplash lookups run 6-at-a-time instead of strictly sequentially
+- ⚡ Auto-fill no longer refetches on every re-render
+- ⚡ Proxy responses carry cache headers; the AI chain is budgeted to fit Netlify's 10s limit
+
+#### Features
+
+- ⚙️ Trip preferences: pace, budget, day start time, group size, kids, step-free access, interests, "avoid" list — persisted and fed into the prompt
+- 📅 `.ics` calendar export
+- 🖨️ Print stylesheet
+- 📴 Service worker for offline app shell
+- 🏷️ Category + "selected only" filters on the discovery grid
+- ✂️ Remove a place from a day; budget, distance and map update live
+- 📏 Per-day straight-line distance
+- ↩️ Browser back/forward navigation between screens
+- 🔗 Web Share API with clipboard fallback
+- ♿ Focus-trapped modals, keyboard-operable cards/accordions/autocomplete, ARIA live regions, `prefers-reduced-motion`, skip link
+- 📆 Date inputs enforce a minimum, auto-correct an inverted range and cap trips at 30 days
+
+### v1.2.0
 - ✅ Gemini 2.5 Flash as primary AI (replaces Groq as primary)
 - ✅ Gemini 2.5 Flash Lite added as Tier 1b fallback
 - ✅ Custom places: home screen textarea + discovery paste-list with AI enrichment

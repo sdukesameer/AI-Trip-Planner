@@ -1,153 +1,228 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AI Trip Planner — Plan Your Perfect Journey</title>
-        <meta name="description"
-            content="AI-powered travel itinerary planner. Enter your destinations and dates to get a personalized day-wise trip plan with maps, images, and commute info.">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trip Planner — Plan Your Perfect Journey</title>
+    <meta name="description"
+        content="AI-powered travel itinerary planner. Enter your destinations and dates to get a personalized day-wise trip plan with maps, images, and commute info.">
+    <meta name="color-scheme" content="dark light">
 
-        <!-- Open Graph Meta Tags (Facebook, WhatsApp, LinkedIn) -->
-        <meta property="og:type" content="website">
-        <meta property="og:url" content="https://ai-trip-genie.netlify.app">
-        <meta property="og:title" content="AI Trip Planner ✈️ — Plan Your Perfect Journey">
-        <meta property="og:description" content="AI-powered travel itinerary generator. Enter destinations & dates → Get day-wise plans with maps, images, commute info & PDF export.">
-        <meta property="og:image" content="https://ai-trip-genie.netlify.app/icons/icon-1024x1024.png">
-        <meta property="og:image:width" content="1024">
-        <meta property="og:image:height" content="1024">
-        <meta property="og:site_name" content="AI Trip Planner">
-        <meta property="og:locale" content="en_IN">
+    <!-- Open Graph Meta Tags (Facebook, WhatsApp, LinkedIn) -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://ai-trip-genie.netlify.app">
+    <meta property="og:title" content="AI Trip Planner ✈️ — Plan Your Perfect Journey">
+    <meta property="og:description"
+        content="AI-powered travel itinerary generator. Enter destinations & dates → Get day-wise plans with maps, images, commute info & PDF export.">
+    <meta property="og:image" content="https://ai-trip-genie.netlify.app/icons/icon-1024x1024.png">
+    <meta property="og:image:width" content="1024">
+    <meta property="og:image:height" content="1024">
+    <meta property="og:site_name" content="AI Trip Planner">
+    <meta property="og:locale" content="en_IN">
 
-        <!-- Twitter Card Meta Tags -->
-        <meta name="twitter:card" content="summary">
-        <meta name="twitter:url" content="https://ai-trip-genie.netlify.app">
-        <meta name="twitter:title" content="AI Trip Planner ✈️">
-        <meta name="twitter:description" content="Generate smart travel itineraries with AI. Maps, budgets, PDF export & trip sharing.">
-        <meta name="twitter:image" content="https://ai-trip-genie.netlify.app/icons/icon-1024x1024.png">
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:url" content="https://ai-trip-genie.netlify.app">
+    <meta name="twitter:title" content="AI Trip Planner ✈️">
+    <meta name="twitter:description" content="Generate smart travel itineraries with AI. Maps, budgets, PDF export & trip sharing.">
+    <meta name="twitter:image" content="https://ai-trip-genie.netlify.app/icons/icon-1024x1024.png">
 
-        <!-- Slack / Teams Preview -->
-        <meta name="slack:description" content="Plan your next trip with AI. Automatic place discovery, smart scheduling & interactive maps.">
+    <!-- Leaflet CSS -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
-        <!-- Leaflet CSS -->
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-            integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/components.css">
 
-        <link rel="stylesheet" href="css/style.css">
-        <link rel="stylesheet" href="css/components.css">
+    <!-- Favicons & PWA -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0a0a14">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="AI Trip Planner">
+</head>
 
-        <!-- Favicons & PWA -->
-        <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
-        <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
-        <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-        <link rel="manifest" href="manifest.json">
-        <meta name="theme-color" content="#6366f1">
-        <meta name="mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-        <meta name="apple-mobile-web-app-title" content="AI Trip Planner">
-    </head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
 
-    <body>
+    <!-- ══════════════════ NAVBAR ══════════════════════════ -->
+    <nav class="navbar">
+        <div class="nav-logo" id="home-logo" role="button" tabindex="0" title="Go home">
+            <span class="logo-icon" aria-hidden="true">✈️</span>
+            <span>AI Trip Planner</span>
+        </div>
+        <div class="nav-actions">
+            <button class="btn btn-ghost btn-sm" id="mytrips-btn" type="button" title="My saved trips">💾 <span
+                    class="nav-btn-label">My Trips</span></button>
+            <a class="btn btn-ghost btn-sm" id="docs-btn"
+                href="https://github.com/sdukesameer/AI-Trip-Planner?tab=readme-ov-file#readme" target="_blank"
+                rel="noopener" title="Documentation">📖 <span class="nav-btn-label">Docs</span></a>
+            <button class="btn btn-ghost btn-sm icon-btn" id="theme-btn" type="button" title="Toggle theme"
+                aria-label="Toggle theme">🌙</button>
+        </div>
+    </nav>
 
-        <!-- ══════════════════ NAVBAR ══════════════════════════ -->
-        <nav class="navbar">
-            <div class="nav-logo" id="home-logo" role="button" tabindex="0" title="Go home">
-                <span class="logo-icon">✈️</span>
-                <span>AI Trip Planner</span>
+    <!-- ══════════════════ PROGRESS OVERLAY ═══════════════ -->
+    <div id="progress-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="progress-title"
+        aria-busy="true">
+        <div class="progress-card">
+            <div class="progress-airplane" aria-hidden="true">✈️</div>
+            <div class="progress-title" id="progress-title">Planning your trip…</div>
+            <div class="progress-label" id="progress-label" role="status">Initialising…</div>
+            <div class="progress-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-bar-fill" id="progress-bar-fill"></div>
             </div>
-            <div class="nav-actions">
-                <button class="btn btn-ghost btn-sm" id="mytrips-btn" title="My saved trips">💾 My Trips</button>
-                <a class="btn btn-ghost btn-sm" id="docs-btn"
-                    href="https://github.com/sdukesameer/AI-Trip-Planner?tab=readme-ov-file#readme" target="_blank"
-                    rel="noopener" title="Documentation">📖 Docs</a>
-                <button class="btn btn-ghost btn-sm icon-btn" id="theme-btn" title="Toggle theme">🌙</button>
+            <div class="progress-meta">
+                <span id="progress-step">Step 1 of 4</span>
+                <span id="progress-pct">0%</span>
             </div>
-        </nav>
+            <div class="stage-dots">
+                <div class="stage-dot active" data-step="0">
+                    <div class="stage-dot-circle">1</div>
+                    <div class="stage-dot-label">Places</div>
+                </div>
+                <div class="stage-dot pending" data-step="1">
+                    <div class="stage-dot-circle">2</div>
+                    <div class="stage-dot-label">Images</div>
+                </div>
+                <div class="stage-dot pending" data-step="2">
+                    <div class="stage-dot-circle">3</div>
+                    <div class="stage-dot-label">Itinerary</div>
+                </div>
+                <div class="stage-dot pending" data-step="3">
+                    <div class="stage-dot-circle">4</div>
+                    <div class="stage-dot-label">Map</div>
+                </div>
+            </div>
+            <div class="ai-model-badge" id="ai-model-badge"></div>
+        </div>
+    </div>
 
-        <!-- ══════════════════ PROGRESS OVERLAY ═══════════════ -->
-        <div id="progress-overlay" class="hidden">
-            <div class="progress-card">
-                <div class="progress-airplane">✈️</div>
-                <div class="progress-title">Planning your trip…</div>
-                <div class="progress-label" id="progress-label">Initialising…</div>
-                <div class="progress-bar-track">
-                    <div class="progress-bar-fill" id="progress-bar-fill" style="width:0%"></div>
+    <!-- ══════════════════ TOAST ═══════════════════════════ -->
+    <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+    <!-- ══════════════════ PLACE DETAIL MODAL ══════════════ -->
+    <div id="place-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="place-detail-name" aria-hidden="true">
+        <div class="place-detail-card">
+            <button class="modal-close place-detail-close" id="place-modal-close" type="button"
+                aria-label="Close">✕</button>
+            <div class="place-detail-img-wrap">
+                <img id="place-detail-img" src="" alt="" loading="lazy">
+                <div class="place-detail-category-badge" id="place-detail-category"></div>
+            </div>
+            <div class="place-detail-body">
+                <div class="place-detail-header">
+                    <h2 class="place-detail-name" id="place-detail-name"></h2>
+                    <a class="btn btn-primary btn-sm" id="place-detail-gmap" href="#" target="_blank"
+                        rel="noopener">🗺️ Google Maps</a>
                 </div>
-                <div class="progress-meta">
-                    <span id="progress-step">Step 1 of 4</span>
-                    <span id="progress-pct">0%</span>
-                </div>
-                <div class="stage-dots">
-                    <div class="stage-dot active" data-step="0">
-                        <div class="stage-dot-circle">1</div>
-                        <div class="stage-dot-label">Places</div>
-                    </div>
-                    <div class="stage-dot pending" data-step="1">
-                        <div class="stage-dot-circle">2</div>
-                        <div class="stage-dot-label">Images</div>
-                    </div>
-                    <div class="stage-dot pending" data-step="2">
-                        <div class="stage-dot-circle">3</div>
-                        <div class="stage-dot-label">Itinerary</div>
-                    </div>
-                    <div class="stage-dot pending" data-step="3">
-                        <div class="stage-dot-circle">4</div>
-                        <div class="stage-dot-label">Map</div>
-                    </div>
-                </div>
-                <div class="ai-model-badge" id="ai-model-badge"
-                    style="display:none;margin-top:16px;font-size:12px;color:var(--text-muted);"></div>
+                <div class="place-detail-meta" id="place-detail-meta"></div>
+                <div class="place-detail-closed" id="place-detail-closed"></div>
+                <div class="place-detail-desc" id="place-detail-desc"></div>
             </div>
         </div>
+    </div>
 
-        <!-- ══════════════════ TOAST ═══════════════════════════ -->
-        <div id="toast-container"></div>
-
-        <!-- ══════════════════════════════════════════════════════
-             PLACE DETAIL MODAL
-             ══════════════════════════════════════════════════════ -->
-        <div id="place-modal" class="modal-overlay hidden">
-            <div class="place-detail-card">
-                <button class="modal-close place-detail-close" id="place-modal-close">✕</button>
-                <div class="place-detail-img-wrap">
-                    <img id="place-detail-img" src="" alt="" loading="lazy">
-                    <div class="place-detail-category-badge" id="place-detail-category"></div>
-                </div>
-                <div class="place-detail-body">
-                    <div class="place-detail-header">
-                        <div class="place-detail-name" id="place-detail-name"></div>
-                        <a class="btn btn-primary btn-sm" id="place-detail-gmap" href="#" target="_blank"
-                            rel="noopener">🗺️
-                            Google Maps</a>
-                    </div>
-                    <div class="place-detail-meta" id="place-detail-meta"></div>
-                    <div class="place-detail-closed" id="place-detail-closed"></div>
-                    <div class="place-detail-desc" id="place-detail-desc"></div>
-                </div>
+    <!-- ══════════════════ MY TRIPS MODAL ══════════════════ -->
+    <div id="mytrips-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="mytrips-title" aria-hidden="true">
+        <div class="modal-card" style="max-width:560px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="mytrips-title">💾 My Saved Trips</h2>
+                <button class="modal-close" id="mytrips-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <div id="mytrips-list" class="mytrips-list"></div>
+            <div style="text-align:center;margin-top:12px;">
+                <button class="btn btn-ghost btn-sm" id="mytrips-clear" type="button">🗑️ Clear All</button>
             </div>
         </div>
+    </div>
 
-        <!-- ══════════════════════════════════════════════════════
-             MY TRIPS MODAL
-             ══════════════════════════════════════════════════════ -->
-        <div id="mytrips-modal" class="modal-overlay hidden">
-            <div class="modal-card" style="max-width:560px;width:100%;">
-                <div class="modal-header">
-                    <div class="modal-title">💾 My Saved Trips</div>
-                    <button class="modal-close" id="mytrips-close">✕</button>
-                </div>
-                <div id="mytrips-list" style="max-height:420px;overflow-y:auto;"></div>
-                <div style="text-align:center;margin-top:12px;">
-                    <button class="btn btn-ghost btn-sm" id="mytrips-clear">🗑️ Clear All</button>
-                </div>
+    <!-- ══════════════════ PASTE PLACES MODAL ══════════════ -->
+    <div id="custom-paste-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="paste-title" aria-hidden="true">
+        <div class="modal-card" style="max-width:500px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="paste-title">📝 Paste Custom Places</h2>
+                <button class="modal-close" id="paste-modal-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <p class="modal-hint" style="margin-bottom:16px;">
+                Paste place names (one per line or comma-separated). They'll be added to your selection.
+            </p>
+            <label class="sr-only" for="custom-paste-input">Place names</label>
+            <textarea id="custom-paste-input" class="input-field" style="min-height:140px;resize:vertical;"
+                placeholder="Red Fort&#10;Qutub Minar&#10;India Gate"></textarea>
+            <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+                <button class="btn btn-ghost btn-sm" id="paste-cancel-btn" type="button">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="paste-apply-btn" type="button">Add Places</button>
             </div>
         </div>
+    </div>
 
-        <!-- ══════════════════════════════════════════════════════
+    <!-- ══════════════════ BUDGET MODAL ════════════════════ -->
+    <div id="budget-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="budget-title"
+        aria-hidden="true">
+        <div class="modal-card" style="max-width:520px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="budget-title">💰 Trip Budget</h2>
+                <button class="modal-close" id="budget-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <div id="budget-body"></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════ PACKING LIST MODAL ══════════════ -->
+    <div id="packing-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="packing-title" aria-hidden="true">
+        <div class="modal-card" style="max-width:560px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="packing-title">🎒 Packing List</h2>
+                <button class="modal-close" id="packing-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <div id="packing-body"></div>
+            <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end;">
+                <button class="btn btn-ghost btn-sm hidden" id="packing-copy" type="button">📋 Copy</button>
+                <button class="btn btn-secondary btn-sm hidden" id="packing-regen" type="button">🔄 Regenerate</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════ LOCAL INFO MODAL ════════════════ -->
+    <div id="info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="info-title"
+        aria-hidden="true">
+        <div class="modal-card" style="max-width:560px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="info-title">ℹ️ Local Info</h2>
+                <button class="modal-close" id="info-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <div id="info-body"></div>
+        </div>
+    </div>
+
+    <!-- ══════════════════ PLACE ACTIONS SHEET ═════════════ -->
+    <div id="place-actions-modal" class="modal-overlay hidden" role="dialog" aria-modal="true"
+        aria-labelledby="place-actions-title" aria-hidden="true">
+        <div class="modal-card action-sheet" style="max-width:420px;">
+            <div class="modal-header">
+                <h2 class="modal-title" id="place-actions-title">Edit place</h2>
+                <button class="modal-close" id="place-actions-close" type="button" aria-label="Close">✕</button>
+            </div>
+            <div id="place-actions-body"></div>
+        </div>
+    </div>
+
+    <main id="main-content">
+
+        <!-- ══════════════════════════════════════════════════
              SCREEN 1 — INPUT
-             ══════════════════════════════════════════════════════ -->
+             ══════════════════════════════════════════════════ -->
         <div id="screen-input" class="screen">
-            <!-- Hero -->
             <section class="hero-section">
                 <div class="hero-badge">✨ Powered by AI</div>
                 <h1 class="hero-title">
@@ -160,25 +235,30 @@
                 </p>
             </section>
 
-            <!-- Input Card -->
             <div class="container">
+                <div id="config-warning" class="alert-banner hidden" role="alert">
+                    ⚠️ No AI provider is configured. Deploy the Netlify functions, or create
+                    <code>js/env.local.js</code> with your API keys for local development.
+                </div>
+
                 <div class="glass-card input-card">
 
                     <!-- Location input with autocomplete -->
                     <div class="modal-field">
                         <label class="input-label" for="location-input">📍 Destinations</label>
-                        <div class="chip-input-wrap" style="position:relative;">
+                        <div class="chip-input-wrap">
                             <input class="input-field" type="text" id="location-input"
-                                placeholder="Type a city, e.g. Delhi…" autocomplete="off">
-                            <button class="btn btn-secondary btn-sm" id="add-location-btn" style="white-space:nowrap;">+
-                                Add</button>
-                            <ul id="location-suggestions" class="location-suggestions hidden"></ul>
+                                placeholder="Type a city, e.g. Delhi…" autocomplete="off" role="combobox"
+                                aria-expanded="false" aria-controls="location-suggestions" aria-autocomplete="list">
+                            <button class="btn btn-secondary btn-sm" id="add-location-btn" type="button">+ Add</button>
+                            <ul id="location-suggestions" class="location-suggestions hidden" role="listbox"
+                                aria-label="Location suggestions"></ul>
                         </div>
                         <div class="chip-box" id="chip-box"></div>
                     </div>
 
                     <!-- Dates -->
-                    <div class="date-row" style="margin-top:24px;">
+                    <div class="date-row">
                         <div class="modal-field" style="margin-bottom:0">
                             <label class="input-label" for="start-date">🗓️ Start Date</label>
                             <input class="input-field" type="date" id="start-date">
@@ -188,28 +268,118 @@
                             <input class="input-field" type="date" id="end-date">
                         </div>
                     </div>
+                    <div class="trip-length-hint" id="trip-length-hint" aria-live="polite"></div>
+
+                    <!-- Stay anchor -->
+                    <div class="modal-field" style="margin-top:18px;margin-bottom:0;">
+                        <label class="input-label" for="stay-input">🏨 Where are you staying? <span
+                                class="label-optional">optional</span></label>
+                        <input class="input-field" type="text" id="stay-input"
+                            placeholder="Hotel name or area, e.g. Karol Bagh" autocomplete="off">
+                        <p class="modal-hint" style="margin-top:6px;">
+                            Each day will start and end here, and the nearest sights get planned first.
+                        </p>
+                    </div>
+
+                    <!-- Trip preferences -->
+                    <div class="disclosure-wrap">
+                        <button class="disclosure-toggle" id="prefs-toggle" type="button" aria-expanded="false"
+                            aria-controls="prefs-body">
+                            <span>⚙️ Trip preferences</span>
+                            <span class="disclosure-chevron" aria-hidden="true">▾</span>
+                        </button>
+                        <div class="disclosure-body hidden" id="prefs-body">
+                            <div class="prefs-grid">
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-pace">Pace</label>
+                                    <select class="input-field" id="pref-pace">
+                                        <option value="relaxed">🍃 Relaxed — 2–3 stops/day</option>
+                                        <option value="balanced">⚖️ Balanced — 3–4 stops/day</option>
+                                        <option value="packed">⚡ Packed — 5–6 stops/day</option>
+                                    </select>
+                                </div>
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-budget">Budget</label>
+                                    <select class="input-field" id="pref-budget">
+                                        <option value="shoestring">💸 Shoestring</option>
+                                        <option value="moderate">💰 Moderate</option>
+                                        <option value="comfort">💎 Comfort</option>
+                                    </select>
+                                </div>
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-start-time">Day starts at</label>
+                                    <select class="input-field" id="pref-start-time">
+                                        <option value="7:00 AM">7:00 AM</option>
+                                        <option value="8:00 AM">8:00 AM</option>
+                                        <option value="9:00 AM">9:00 AM</option>
+                                        <option value="10:00 AM">10:00 AM</option>
+                                        <option value="11:00 AM">11:00 AM</option>
+                                    </select>
+                                </div>
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-travellers">Travellers</label>
+                                    <input class="input-field" type="number" id="pref-travellers" min="1" max="20"
+                                        step="1">
+                                </div>
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-transport">Getting around</label>
+                                    <select class="input-field" id="pref-transport">
+                                        <option value="mixed">🔀 Mixed</option>
+                                        <option value="walk">🚶 Mostly walking</option>
+                                        <option value="transit">🚇 Public transport</option>
+                                        <option value="cab">🚕 Taxi / ride-hailing</option>
+                                        <option value="drive">🚗 Self-drive</option>
+                                    </select>
+                                </div>
+                                <div class="pref-field">
+                                    <label class="input-label" for="pref-currency">Currency</label>
+                                    <select class="input-field" id="pref-currency"></select>
+                                </div>
+                            </div>
+
+                            <div class="pref-field" style="margin-top:14px;">
+                                <span class="input-label" id="interests-label">Interests</span>
+                                <div class="interest-chips" id="interest-chips" role="group"
+                                    aria-labelledby="interests-label"></div>
+                            </div>
+
+                            <div class="pref-checks">
+                                <label class="pref-check"><input type="checkbox" id="pref-kids"> 👶 Travelling with
+                                    kids</label>
+                                <label class="pref-check"><input type="checkbox" id="pref-accessibility"> ♿ Step-free
+                                    access needed</label>
+                            </div>
+
+                            <div class="pref-field" style="margin-top:12px;">
+                                <label class="input-label" for="pref-avoid">Anything to avoid?</label>
+                                <input class="input-field" type="text" id="pref-avoid"
+                                    placeholder="e.g. long hikes, crowded markets">
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- Custom Places (optional pre-seed) -->
-                    <div class="home-custom-places-wrap" id="home-custom-places-wrap">
-                        <button class="home-custom-toggle" id="home-custom-toggle" type="button" aria-expanded="false">
+                    <div class="disclosure-wrap">
+                        <button class="disclosure-toggle" id="home-custom-toggle" type="button" aria-expanded="false"
+                            aria-controls="home-custom-body">
                             <span>🎯 I already know where I want to go</span>
-                            <span class="custom-toggle-chevron">▾</span>
+                            <span class="disclosure-chevron" aria-hidden="true">▾</span>
                         </button>
-                        <div class="home-custom-body hidden" id="home-custom-body">
-                            <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">
+                        <div class="disclosure-body hidden" id="home-custom-body">
+                            <p class="modal-hint" style="margin-bottom:10px;">
                                 Paste place names (one per line or comma-separated) — they'll be auto-selected in the
-                                next
-                                step.
+                                next step.
                             </p>
+                            <label class="sr-only" for="home-custom-places">Places you already know</label>
                             <textarea id="home-custom-places" class="input-field"
-                                style="min-height:90px;resize:vertical;font-size:13px;"
+                                style="min-height:90px;resize:vertical;"
                                 placeholder="Red Fort&#10;Qutub Minar&#10;India Gate, Humayun's Tomb"></textarea>
                         </div>
                     </div>
 
                     <!-- CTA -->
                     <div class="plan-btn-wrap">
-                        <button class="btn btn-primary btn-lg plan-btn" id="plan-btn">
+                        <button class="btn btn-primary btn-lg plan-btn" id="plan-btn" type="button">
                             ✈️ Plan My Trip
                         </button>
                     </div>
@@ -221,7 +391,7 @@
                     <div class="feature-pill">📸 Place Images</div>
                     <div class="feature-pill">🚇 Commute Info</div>
                     <div class="feature-pill">📍 Interactive Map</div>
-                    <div class="feature-pill">📥 Download PDF</div>
+                    <div class="feature-pill">📥 PDF &amp; Calendar</div>
                     <div class="feature-pill">🤖 AI Auto Mode</div>
                     <div class="feature-pill">💾 Save Trips</div>
                     <div class="feature-pill">🔗 Share Trip</div>
@@ -229,19 +399,16 @@
             </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════
+        <!-- ══════════════════════════════════════════════════
              SCREEN 2 — PLACE DISCOVERY
-             ══════════════════════════════════════════════════════ -->
+             ══════════════════════════════════════════════════ -->
         <div id="screen-discovery" class="screen">
             <div class="container">
 
-                <!-- Header -->
                 <div class="discovery-header">
                     <div>
-                        <div class="discovery-title">🌍 Famous Places</div>
-                        <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">
-                            Select the places you want to visit, or let AI choose for you
-                        </div>
+                        <h2 class="discovery-title">🌍 Famous Places</h2>
+                        <p class="discovery-sub">Select the places you want to visit, or let AI choose for you</p>
                     </div>
                     <div class="auto-mode-wrap">
                         <div>
@@ -249,113 +416,123 @@
                             <div class="auto-sublabel">AI picks the best</div>
                         </div>
                         <label class="toggle-switch">
+                            <span class="sr-only">Auto mode</span>
                             <input type="checkbox" id="auto-toggle">
-                            <span class="toggle-thumb"></span>
+                            <span class="toggle-thumb" aria-hidden="true"></span>
                         </label>
                     </div>
                 </div>
 
                 <!-- Search Nearby -->
-                <div class="nearby-search-wrap glass-card" style="padding:20px;margin-bottom:20px;">
-                    <div
-                        style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
-                        <span style="font-size:16px;line-height:1;display:flex;align-items:center;">🔍</span>
+                <div class="nearby-search-wrap glass-card">
+                    <div class="nearby-search-title">
+                        <span aria-hidden="true">🔍</span>
                         <span>Add a Specific Place or Area</span>
                     </div>
-                    <div style="display:flex;gap:10px;align-items:center;width:100%;">
+                    <div class="nearby-search-row">
+                        <label class="sr-only" for="nearby-input">Search for a place</label>
                         <input class="input-field" type="text" id="nearby-input"
-                            placeholder="e.g. India Gate, Red Fort, Connaught Place…" style="flex:1;min-width:0;">
-                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn"
-                            style="white-space:nowrap;flex-shrink:0;">🔍
-                            Search</button>
+                            placeholder="e.g. India Gate, Red Fort, Connaught Place…">
+                        <button class="btn btn-secondary btn-sm" id="nearby-search-btn" type="button">🔍 Search</button>
+                        <button class="btn btn-ghost btn-sm" id="custom-paste-btn" type="button"
+                            title="Paste a list of place names">📝 Paste List</button>
                     </div>
-                    <div id="nearby-results" class="place-card-grid" style="margin-top:12px;"></div>
+                    <div id="nearby-results" class="place-card-grid"></div>
                 </div>
 
-                <!-- Selection count -->
+                <!-- Filters + selection count -->
                 <div class="selection-bar">
                     <span id="selection-count">0 places selected</span>
-                    <span style="font-size:12px;color:var(--text-muted);">Click cards to select · Enable Auto to let AI
-                        decide</span>
+                    <div class="selection-bar-actions">
+                        <button class="filter-chip" id="selected-only-toggle" type="button"
+                            aria-pressed="false">★ Selected only</button>
+                        <button class="btn btn-ghost btn-sm hidden" id="clear-selection-btn" type="button">Clear</button>
+                    </div>
                 </div>
+                <div class="category-filter hidden" id="category-filter" role="group"
+                    aria-label="Filter places by category"></div>
 
                 <!-- Place cards grid (populated by JS) -->
-                <div id="discovery-grid"></div>
+                <div id="discovery-grid" class="discovery-grid"></div>
 
-                <!-- Bottom action bar -->
                 <div class="discovery-action-bar">
-                    <button class="btn btn-ghost" id="back-to-input">← Back</button>
-                    <button class="btn btn-primary" id="generate-btn">
-                        🧠 Generate Itinerary
-                    </button>
+                    <button class="btn btn-ghost" id="back-to-input" type="button">← Back</button>
+                    <button class="btn btn-primary" id="generate-btn" type="button">🧠 Generate Itinerary</button>
                 </div>
 
             </div>
         </div>
 
-        <!-- ══════════════════════════════════════════════════════
+        <!-- ══════════════════════════════════════════════════
              SCREEN 3 — ITINERARY
-             ══════════════════════════════════════════════════════ -->
+             ══════════════════════════════════════════════════ -->
         <div id="screen-itinerary" class="screen">
             <div class="container">
 
-                <!-- Top row -->
-                <div class="itin-top" style="padding-top:28px;">
+                <div class="itin-top">
                     <div>
-                        <div class="itin-title">🗓️ Your Itinerary</div>
+                        <h2 class="itin-title">🗓️ Your Itinerary</h2>
                         <div class="itin-summary-text" id="itin-summary">Loading…</div>
-                        <div class="ai-provider-tag" id="ai-provider-tag"
-                            style="display:none;margin-top:6px;font-size:12px;"></div>
-                        <div class="budget-badge" id="budget-badge" style="display:none;margin-top:6px;"></div>
+                        <div class="itin-tags">
+                            <span class="ai-provider-tag hidden" id="ai-provider-tag"></span>
+                            <button class="budget-badge hidden" id="budget-badge" type="button"></button>
+                            <span class="travel-badge hidden" id="travel-badge"></span>
+                        </div>
+                        <div class="plan-notice hidden" id="plan-notice" role="status"></div>
                     </div>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                        <button class="btn btn-ghost btn-sm" id="back-to-discovery">← Edit Places</button>
-                        <button class="btn btn-secondary btn-sm" id="new-trip-btn">🔄 New Trip</button>
-                        <button class="btn btn-secondary btn-sm" id="save-trip-btn">💾 Save</button>
-                        <button class="btn btn-ghost btn-sm" id="share-trip-btn">🔗 Share</button>
+                    <div class="itin-actions">
+                        <button class="btn btn-ghost btn-sm" id="back-to-discovery" type="button">← Edit Places</button>
+                        <button class="btn btn-ghost btn-sm" id="packing-btn" type="button">🎒 Packing</button>
+                        <button class="btn btn-ghost btn-sm" id="info-btn" type="button">ℹ️ Local info</button>
+                        <button class="btn btn-secondary btn-sm" id="new-trip-btn" type="button">🔄 New Trip</button>
+                        <button class="btn btn-secondary btn-sm" id="save-trip-btn" type="button">💾 Save</button>
+                        <button class="btn btn-ghost btn-sm" id="share-trip-btn" type="button">🔗 Share</button>
                     </div>
                 </div>
 
-                <!-- Two-column layout -->
                 <div class="itinerary-layout">
 
-                    <!-- Left: Accordion -->
                     <div class="itinerary-panel">
                         <div id="itinerary-accordion"></div>
 
-                        <!-- Download bar -->
                         <div class="download-bar">
                             <div>
-                                <div class="download-title">📥 Download Itinerary</div>
-                                <div class="download-sub">Save your trip plan to share or print</div>
+                                <div class="download-title">📥 Export Itinerary</div>
+                                <div class="download-sub">Save, print or add it to your calendar</div>
                             </div>
                             <div class="download-btns">
-                                <button class="btn btn-outline btn-sm" id="copy-btn">📋 Copy</button>
-                                <button class="btn btn-secondary btn-sm" id="download-txt-btn">📄 Text</button>
-                                <button class="btn btn-primary btn-sm" id="download-pdf-btn">📑 PDF</button>
+                                <button class="btn btn-outline btn-sm" id="copy-btn" type="button">📋 Copy</button>
+                                <button class="btn btn-secondary btn-sm" id="download-txt-btn" type="button">📄
+                                    Text</button>
+                                <button class="btn btn-secondary btn-sm" id="download-ics-btn" type="button">📅
+                                    Calendar</button>
+                                <button class="btn btn-ghost btn-sm" id="print-btn" type="button">🖨️ Print</button>
+                                <button class="btn btn-primary btn-sm" id="download-pdf-btn" type="button">📑
+                                    PDF</button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right: Map -->
                     <div class="map-panel">
                         <div class="map-container" id="map-container"></div>
+                        <p class="map-note hidden" id="map-note"></p>
                         <div class="day-legend" id="day-legend"></div>
                         <div style="margin-top:8px;">
-                            <button class="btn btn-ghost btn-sm" id="map-reset-focus">↺ Show All Days</button>
+                            <button class="btn btn-ghost btn-sm" id="map-reset-focus" type="button">↺ Show All
+                                Days</button>
                         </div>
                     </div>
 
                 </div>
             </div>
         </div>
+    </main>
 
-        <!-- Scripts -->
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script type="module" src="js/app.js"></script>
 
-        <script type="module" src="js/app.js"></script>
-
-    </body>
+</body>
 
 </html>

@@ -1,17 +1,21 @@
-export const ENV_KEYS = {
-    // Required: Get a free key at https://aistudio.google.com/app/apikey (15 RPM free)
-    geminiKey: 'PASTE_YOUR_GEMINI_KEY_HERE',
-
-    // Optional: Only used if Gemini fails. Get a free key at https://console.groq.com/keys
-    groqKey: 'PASTE_YOUR_GROQ_KEY_HERE',
-
-    // Optional: Only used if Gemini and Groq both fail. Get a free key at https://openrouter.ai/dashboard/apikeys
-    openrouterKey: 'PASTE_YOUR_OPENROUTER_KEY_HERE',
-
-    // Optional: Used to fetch high-quality place photos. Get a free key at https://unsplash.com/developers (50 req/hr free).
-    // If empty, the app falls back to placeholder SVG images automatically.
-    unsplashKey: 'PASTE_YOUR_UNSPLASH_KEY_HERE',
-
-    // Optional: Used for daily weather forecasts. Get a free key at https://openweathermap.org/api
-    openWeatherKey: 'PASTE_YOUR_OPENWEATHER_KEY_HERE'
-};
+// ============================================================
+//  env.js — SAFE PLACEHOLDER. Never put real keys here.
+//
+//  This file is committed to git and served publicly in production,
+//  so any key written here is readable by anyone on the internet.
+//
+//  For LOCAL development against the AI providers directly, create
+//  js/env.local.js (git-ignored) — it takes precedence over this file:
+//
+//    export const ENV_KEYS = {
+//      geminiKey:     '...',   // https://aistudio.google.com/app/apikey
+//      groqKey:       '...',   // https://console.groq.com/keys
+//      openrouterKey: '...',   // https://openrouter.ai/dashboard/apikeys
+//      unsplashKey:   '...',   // https://unsplash.com/developers
+//    };
+//
+//  In production none of this is needed: requests go through the
+//  Netlify functions, which read the keys from the server environment.
+//  The OpenWeather key is server-side only and has no client equivalent.
+// ============================================================
+export const ENV_KEYS = {};

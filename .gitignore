@@ -1,8 +1,13 @@
 # Dependencies
 node_modules/
 
-# Auto-generated env file (contains API keys)
-# Removed js/env.js as requested so users can easily edit it over git.
+# Local API keys for direct-provider development.
+# js/env.js stays tracked (placeholders only); js/env.local.js holds real keys
+# and must never be committed.
+js/env.local.js
+
+# Netlify
+.netlify/
 
 # OS
 .DS_Store

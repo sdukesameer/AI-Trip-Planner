@@ -1,11 +1,12 @@
 // ============================================================
-//  download.js — Itinerary export (rich PDF + emoji clipboard)
+//  download.js — Itinerary export (PDF, text, calendar, clipboard)
 // ============================================================
+
+import { parseYMD, formatLongDate, formatWeekdayDate } from './util.js';
 
 const DAY_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1'];
 const DAY_EMOJIS = ['🟦', '🟩', '🟨', '🟥', '🟪', '🩷', '🩵', '🟧', '🟢', '🔵'];
 const FLAG_MAP = { 'India': '🇮🇳', 'France': '🇫🇷', 'USA': '🇺🇸', 'UK': '🇬🇧', 'Japan': '🇯🇵', 'Italy': '🇮🇹', 'Spain': '🇪🇸', 'Germany': '🇩🇪', 'Australia': '🇦🇺', 'UAE': '🇦🇪' };
-const LOCALE = typeof navigator !== 'undefined' ? (navigator.language || 'en-IN') : 'en-IN';
 
 // ── Helper: pick country flag from location name ──────────────
 function getFlag(locations) {
@@ -15,16 +16,37 @@ function getFlag(locations) {
     return '🗺️';
 }
 
-// ── Rich emoji copy text (matches user's personal format) ─────
+function formatDateRange(start, end) {
+    return `${formatLongDate(start)} – ${formatLongDate(end)}`;
+}
+
+/** Trigger a browser download without revoking the blob URL too early. */
+function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    // Firefox aborts the download if the object URL is revoked synchronously.
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 5000);
+}
+
+function safeFileStem(locations, startDate) {
+    const place = (locations[0] || 'itinerary').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
+    return `trip-${place || 'itinerary'}-${startDate}`;
+}
+
+// ── Rich emoji copy text ──────────────────────────────────────
 export function generateTextItinerary(itinerary, locations, startDate, endDate) {
     const flag = getFlag(locations);
     const locStr = locations.join(' + ').toUpperCase();
-    const dateStr = formatDateRange(startDate, endDate);
     const lines = [];
 
     lines.push(`${flag} ${locStr} TRIP ITINERARY ✨`);
     lines.push('');
-    lines.push(`📅 Dates: ${dateStr}`);
+    lines.push(`📅 Dates: ${formatDateRange(startDate, endDate)}`);
     lines.push(`📍 Destinations: ${locations.join(', ')}`);
     if (itinerary.summary) lines.push(`💬 ${itinerary.summary}`);
     lines.push('');
@@ -32,23 +54,17 @@ export function generateTextItinerary(itinerary, locations, startDate, endDate) 
 
     itinerary.days.forEach((day, dIdx) => {
         const emoji = DAY_EMOJIS[dIdx % DAY_EMOJIS.length];
-        const dayDate = formatWeekday(day.date);
         lines.push('');
         lines.push(`${emoji} DAY ${day.day} — ${(day.theme || 'EXPLORE').toUpperCase()} ✨`);
-        lines.push(`🗓️ ${dayDate}${day.location ? '  |  📍 ' + day.location : ''}`);
+        lines.push(`🗓️ ${formatWeekdayDate(day.date)}${day.location ? '  |  📍 ' + day.location : ''}`);
         lines.push('');
 
         day.places.forEach((place, pIdx) => {
-            const timePrefix = place.arrivalTime ? `${place.arrivalTime}` : '';
             const durStr = place.visitDuration ? ` (${place.visitDuration})` : '';
+            lines.push(place.arrivalTime
+                ? `${place.arrivalTime}  →  ${place.name}${durStr}`
+                : `${pIdx + 1}. ${place.name}${durStr}`);
 
-            if (timePrefix) {
-                lines.push(`${timePrefix}  →  ${place.name}${durStr}`);
-            } else {
-                lines.push(`${pIdx + 1}. ${place.name}${durStr}`);
-            }
-
-            // Meta info
             const meta = [];
             if (place.openingHours) meta.push(`⏰ ${place.openingHours}`);
             if (place.entryFee) meta.push(`💰 ${place.entryFee}`);
@@ -62,7 +78,6 @@ export function generateTextItinerary(itinerary, locations, startDate, endDate) 
                 lines.push(`   📝 ${short}`);
             }
 
-            // Commute from previous
             if (pIdx > 0 && place.commute_from_prev) {
                 const c = place.commute_from_prev;
                 const cv = [];
@@ -84,16 +99,120 @@ export function generateTextItinerary(itinerary, locations, startDate, endDate) 
 
 export function downloadAsText(itinerary, locations, startDate, endDate) {
     const text = generateTextItinerary(itinerary, locations, startDate, endDate);
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `trip-${locations[0]?.replace(/\s+/g, '-') || 'itinerary'}-${startDate}.txt`; a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `${safeFileStem(locations, startDate)}.txt`);
 }
 
 export async function copyToClipboard(itinerary, locations, startDate, endDate) {
     const text = generateTextItinerary(itinerary, locations, startDate, endDate);
-    await navigator.clipboard.writeText(text);
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    // Fallback for non-secure contexts where the Clipboard API is unavailable.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    if (!ok) throw new Error('Clipboard unavailable');
+}
+
+// ── Calendar export (.ics) ────────────────────────────────────
+/** Parse "10:00 AM" / "14:30" into {h, m}; null when unparseable. */
+function parseClock(str) {
+    const m = /(\d{1,2})\s*[:.]?\s*(\d{2})?\s*(am|pm)?/i.exec(String(str || ''));
+    if (!m) return null;
+    let h = Number(m[1]);
+    const min = Number(m[2] || 0);
+    const ampm = (m[3] || '').toLowerCase();
+    if (ampm === 'pm' && h < 12) h += 12;
+    if (ampm === 'am' && h === 12) h = 0;
+    if (h > 23 || min > 59) return null;
+    return { h, m: min };
+}
+
+/** "2 hrs" / "90 min" / "1.5 hours" → minutes. */
+function durationMinutes(str, fallback = 90) {
+    const s = String(str || '').toLowerCase();
+    const hours = /([\d.]+)\s*(hr|hour)/.exec(s);
+    if (hours) return Math.round(parseFloat(hours[1]) * 60);
+    const mins = /([\d.]+)\s*(min)/.exec(s);
+    if (mins) return Math.round(parseFloat(mins[1]));
+    return fallback;
+}
+
+function icsStamp(date) {
+    const p = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}T${p(date.getHours())}${p(date.getMinutes())}00`;
+}
+
+function icsEscape(str) {
+    return String(str || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+
+/** RFC 5545 requires lines ≤ 75 octets, continued with a leading space. */
+function foldLine(line) {
+    if (line.length <= 74) return line;
+    const chunks = [line.slice(0, 74)];
+    let rest = line.slice(74);
+    while (rest.length) { chunks.push(' ' + rest.slice(0, 73)); rest = rest.slice(73); }
+    return chunks.join('\r\n');
+}
+
+export function downloadAsCalendar(itinerary, locations, startDate) {
+    const lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//AI Trip Planner//EN',
+        'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+        `X-WR-CALNAME:${icsEscape(locations.join(' + ') + ' Trip')}`,
+    ];
+    const stampNow = icsStamp(new Date());
+    let uid = 0;
+
+    itinerary.days.forEach(day => {
+        const base = parseYMD(day.date);
+        if (isNaN(base)) return;
+        let cursor = new Date(base);
+        cursor.setHours(10, 0, 0, 0);
+
+        day.places.forEach(place => {
+            const clock = parseClock(place.arrivalTime);
+            const start = new Date(base);
+            if (clock) start.setHours(clock.h, clock.m, 0, 0);
+            else start.setTime(cursor.getTime());
+
+            const end = new Date(start.getTime() + durationMinutes(place.visitDuration) * 60000);
+            cursor = new Date(end.getTime() + 30 * 60000);   // 30 min transit before the next stop
+
+            const descParts = [];
+            if (place.desc) descParts.push(place.desc);
+            if (place.entryFee) descParts.push(`Entry: ${place.entryFee}`);
+            if (place.openingHours) descParts.push(`Hours: ${place.openingHours}`);
+            if (place.closedNote) descParts.push(`Note: ${place.closedNote}`);
+            descParts.push(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([place.name, place.location || day.location || ''].filter(Boolean).join(' '))}`);
+
+            lines.push(
+                'BEGIN:VEVENT',
+                `UID:atp-${startDate}-${day.day}-${uid++}@ai-trip-genie`,
+                `DTSTAMP:${stampNow}`,
+                `DTSTART:${icsStamp(start)}`,
+                `DTEND:${icsStamp(end)}`,
+                foldLine(`SUMMARY:${icsEscape(`Day ${day.day}: ${place.name}`)}`),
+                foldLine(`LOCATION:${icsEscape([place.name, place.location || day.location].filter(Boolean).join(', '))}`),
+                foldLine(`DESCRIPTION:${icsEscape(descParts.join('\n'))}`),
+                ...(Number.isFinite(place.lat) && Number.isFinite(place.lng) ? [`GEO:${place.lat};${place.lng}`] : []),
+                'END:VEVENT',
+            );
+        });
+    });
+
+    lines.push('END:VCALENDAR');
+    saveBlob(
+        new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' }),
+        `${safeFileStem(locations, startDate)}.ics`
+    );
 }
 
 // ── PDF with thumbnails ───────────────────────────────────────
@@ -102,7 +221,8 @@ async function urlToBase64(url) {
         const res = await fetch(url);
         if (!res.ok) return null;
         const blob = await res.blob();
-        return new Promise(resolve => {
+        if (!blob.type.startsWith('image/')) return null;
+        return await new Promise(resolve => {
             const fr = new FileReader();
             fr.onload = () => resolve(fr.result);
             fr.onerror = () => resolve(null);
@@ -112,40 +232,38 @@ async function urlToBase64(url) {
 }
 
 function hexToRgb(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return [r, g, b];
+    return [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+    ];
 }
 
 export async function downloadAsPDF(itinerary, locations, startDate, endDate, imageCache = {}) {
     if (!window.jspdf) {
         await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
     }
+    if (!window.jspdf) throw new Error('PDF library failed to load');
+
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
     const PW = doc.internal.pageSize.getWidth();
     const PH = doc.internal.pageSize.getHeight();
-    const ML = 14;
-    const MR = 14;
+    const ML = 14, MR = 14;
     const CW = PW - ML - MR;
     let y = 0;
 
-    // Pre-fetch all images as base64
+    // Pre-fetch all images as base64, in parallel
     const allPlaceNames = [...new Set(itinerary.days.flatMap(d => d.places.map(p => p.name)))];
     const b64Cache = {};
     await Promise.all(allPlaceNames.map(async name => {
         const url = imageCache[name];
-        if (url && url.startsWith('http')) {
-            b64Cache[name] = await urlToBase64(url);
-        }
+        if (url && url.startsWith('http')) b64Cache[name] = await urlToBase64(url);
     }));
 
-    function newPage() { doc.addPage(); y = 14; addPageFooter(); }
-    function checkY(needed = 10) { if (y + needed > PH - 20) newPage(); }
-    function setFill(hex) { const [r, g, b] = hexToRgb(hex); doc.setFillColor(r, g, b); }
-    function setTextCol(hex) { const [r, g, b] = hexToRgb(hex); doc.setTextColor(r, g, b); }
-    function setDrawCol(hex) { const [r, g, b] = hexToRgb(hex); doc.setDrawColor(r, g, b); }
+    const setFill = hex => { const [r, g, b] = hexToRgb(hex); doc.setFillColor(r, g, b); };
+    const setTextCol = hex => { const [r, g, b] = hexToRgb(hex); doc.setTextColor(r, g, b); };
+    const setDrawCol = hex => { const [r, g, b] = hexToRgb(hex); doc.setDrawColor(r, g, b); };
 
     function addPageFooter() {
         setTextCol('#94a3b8');
@@ -153,6 +271,8 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
         doc.text('AI Trip Planner  •  https://ai-trip-genie.netlify.app', ML, PH - 8);
         doc.text(`${doc.internal.getCurrentPageInfo().pageNumber}`, PW - ML, PH - 8, { align: 'right' });
     }
+    function newPage() { doc.addPage(); y = 14; addPageFooter(); }
+    function checkY(needed = 10) { if (y + needed > PH - 20) newPage(); }
 
     // ── Cover Header ────────────────────────────────────────────
     setFill('#0f0c29'); doc.rect(0, 0, PW, 58, 'F');
@@ -171,8 +291,7 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
 
     if (itinerary.summary) {
         doc.setFontSize(8.5); doc.setFont('helvetica', 'italic'); setTextCol('#e0e7ff');
-        const sumLines = doc.splitTextToSize(itinerary.summary, CW);
-        doc.text(sumLines, ML, 51);
+        doc.text(doc.splitTextToSize(itinerary.summary, CW).slice(0, 2), ML, 51);
     }
 
     y = 68;
@@ -182,27 +301,26 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
         const color = DAY_COLORS[dayIdx % DAY_COLORS.length];
         checkY(24);
 
-        // Day banner
         setFill(color);
         doc.roundedRect(ML, y, CW, 11, 2, 2, 'F');
         setTextCol('#ffffff');
         doc.setFontSize(10); doc.setFont('helvetica', 'bold');
         doc.text(`  DAY ${day.day}  —  ${(day.theme || 'EXPLORE').toUpperCase()}`, ML + 3, y + 7.5);
         doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-        const dayMeta = `${day.date}${day.location ? '  •  ' + day.location : ''}`;
-        doc.text(dayMeta, ML + CW - 3, y + 7.5, { align: 'right' });
+        doc.text(`${day.date}${day.location ? '  •  ' + day.location : ''}`, ML + CW - 3, y + 7.5, { align: 'right' });
         y += 15;
 
-        // ── Places ──────────────────────────────────────────────
         for (const [pIdx, place] of day.places.entries()) {
             const IMG_W = 38, IMG_H = 26;
-            const hasImg = !!b64Cache[place.name];
+            const hasImg = Boolean(b64Cache[place.name]);
             const textX = hasImg ? ML + IMG_W + 4 : ML + 10;
             const textW = hasImg ? CW - IMG_W - 4 : CW - 10;
 
-            checkY(hasImg ? IMG_H + 8 : 28);
+            checkY(hasImg ? IMG_H + 10 : 28);
+            // Track where this place block begins so the text can never end up
+            // overlapping a taller thumbnail.
+            const blockTop = y;
 
-            // Thumbnail
             if (hasImg) {
                 try {
                     doc.addImage(b64Cache[place.name], 'JPEG', ML, y, IMG_W, IMG_H, undefined, 'FAST');
@@ -225,14 +343,13 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
                 setTextCol(color);
                 doc.setFontSize(8.5); doc.setFont('helvetica', 'bold');
                 doc.text(place.arrivalTime, textX + 9, y + 5.5);
-                nameX = textX + 9 + doc.getStringUnitWidth(place.arrivalTime) * 8.5 * 0.352 + 3;
+                nameX = textX + 9 + doc.getTextWidth(place.arrivalTime) + 3;
             }
 
             // Place name
             setTextCol('#1e293b');
             doc.setFontSize(10.5); doc.setFont('helvetica', 'bold');
-            const nameLines = doc.splitTextToSize(place.name, textW - (nameX - textX) - 2);
-            doc.text(nameLines, nameX, y + 5.5);
+            doc.text(doc.splitTextToSize(place.name, Math.max(20, textW - (nameX - textX) - 24)), nameX, y + 5.5);
 
             // Duration + category
             doc.setFontSize(7); setTextCol('#64748b'); doc.setFont('helvetica', 'normal');
@@ -241,21 +358,19 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
 
             y += 9;
 
-            // Meta
             const meta = [];
             if (place.openingHours) meta.push(`Hours: ${place.openingHours}`);
             if (place.entryFee) meta.push(`Cost: ${place.entryFee.replace(/₹/g, 'Rs. ')}`);
             if (place.bestTime) meta.push(`Best: ${place.bestTime}`);
             if (meta.length) {
                 setTextCol('#334155'); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-                const metaLine = doc.splitTextToSize(meta.join('   |   '), textW);
+                const metaLine = doc.splitTextToSize(meta.join('   |   '), textW - 10);
                 doc.text(metaLine, textX + 10, y);
                 y += metaLine.length * 4.5;
             }
 
-            // Closed note
             if (place.closedNote) {
-                checkY(8);
+                checkY(9);
                 doc.setFillColor(254, 243, 199);
                 doc.roundedRect(textX + 10, y - 2, textW - 10, 7, 1, 1, 'F');
                 setTextCol('#92400e'); doc.setFontSize(7.5);
@@ -264,23 +379,17 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
                 y += cnLines.length * 4.5 + 2;
             }
 
-            // Description
             if (place.desc) {
                 checkY(10);
                 setTextCol('#334155'); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
-                const safeDesc = place.desc.replace(/₹/g, 'Rs. ');
-                const descLines = doc.splitTextToSize(safeDesc, textW - 10).slice(0, 3);
+                const descLines = doc.splitTextToSize(place.desc.replace(/₹/g, 'Rs. '), textW - 10).slice(0, 3);
                 doc.text(descLines, textX + 10, y);
                 y += descLines.length * 4.5 + 2;
             }
 
-            // Ensure we're at least below the image
-            if (hasImg) y = Math.max(y, ML + IMG_H + (dayIdx === 0 && pIdx === 0 ? 68 - 68 : 0));
-            // relative to current start of this place block
-            const blockStart = y - (meta.length * 4.5) - (place.closedNote ? 8 : 0) - (place.desc ? 16 : 0) - 9;
-            if (hasImg && y < blockStart + IMG_H + 3) y = blockStart + IMG_H + 3;
+            // Never let the next element start above the bottom of the thumbnail.
+            if (hasImg) y = Math.max(y, blockTop + IMG_H + 3);
 
-            // Commute
             if (pIdx > 0 && place.commute_from_prev) {
                 const c = place.commute_from_prev;
                 const cv = [];
@@ -288,11 +397,11 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
                 if (c.metro && c.metro !== 'N/A') cv.push('Metro: ' + c.metro.replace(/₹/g, 'Rs. '));
                 if (c.cab && c.cab !== 'N/A') cv.push('Cab: ' + c.cab.replace(/₹/g, 'Rs. '));
                 if (cv.length) {
+                    checkY(9);
                     doc.setFillColor(241, 245, 249);
-                    checkY(8);
                     doc.roundedRect(ML + 10, y - 1, CW - 10, 6.5, 1, 1, 'F');
                     setTextCol('#475569'); doc.setFontSize(7.5);
-                    doc.text('Getting there:  ' + cv.join('   |   '), ML + 12, y + 3.5);
+                    doc.text(doc.splitTextToSize('Getting there:  ' + cv.join('   |   '), CW - 14)[0], ML + 12, y + 3.5);
                     y += 8;
                 }
             }
@@ -308,26 +417,28 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
     }
 
     addPageFooter();
-    const fname = `trip-${locations[0]?.replace(/\s+/g, '-') || 'itinerary'}-${startDate}.pdf`;
-    doc.save(fname);
+    doc.save(`${safeFileStem(locations, startDate)}.pdf`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────
 function loadScript(src) {
-    if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) {
+        // A tag may exist but still be loading — wait for it rather than
+        // resolving immediately and racing the caller.
+        if (existing.dataset.loaded === 'true') return Promise.resolve();
+        return new Promise((resolve, reject) => {
+            existing.addEventListener('load', resolve, { once: true });
+            existing.addEventListener('error', () => reject(new Error('Script failed to load')), { once: true });
+        });
+    }
     return new Promise((resolve, reject) => {
         const s = document.createElement('script');
-        s.src = src; s.onload = resolve; s.onerror = reject;
+        s.src = src;
+        s.onload = () => { s.dataset.loaded = 'true'; resolve(); };
+        s.onerror = () => reject(new Error('Script failed to load'));
         document.head.appendChild(s);
     });
 }
 
-function formatDateRange(start, end) {
-    const opts = { day: 'numeric', month: 'long', year: 'numeric' };
-    return `${new Date(start).toLocaleDateString(LOCALE, opts)} – ${new Date(end).toLocaleDateString(LOCALE, opts)}`;
-}
-
-function formatWeekday(dateStr) {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-}
+export { formatDateRange };
