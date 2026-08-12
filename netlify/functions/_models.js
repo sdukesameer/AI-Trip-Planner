@@ -38,7 +38,7 @@ async function fetchJSON(url, options = {}, ms = 3500) {
 }
 
 // Model families we never want for JSON text generation.
-const EXCLUDE = /embed|aqa|imagen|veo|image-generation|tts|audio|realtime|live|guard|whisper|vision-only|learnlm/i;
+const EXCLUDE = /embed|aqa|imagen|veo|image-generation|-image(?:-|$)|tts|audio|realtime|live|guard|whisper|vision-only|learnlm/i;
 
 /**
  * Rank candidate model names. Higher is better.
@@ -99,7 +99,7 @@ async function geminiModels(apiKey, limit = 3) {
 
     // Listing failed (network, quota). Fall back to a spread of names across
     // generations so at least one is likely to resolve.
-    return cached(key, ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-flash'].slice(0, limit));
+    return cached(key, ['gemini-flash-latest', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'].slice(0, limit));
 }
 
 /** Same idea for Groq, whose model IDs are deprecated frequently. */

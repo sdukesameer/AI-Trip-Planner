@@ -99,8 +99,8 @@ exports.handler = async (event, context) => {
     // retire them without notice, and a stale ID is a 404 that looks exactly
     // like a broken key.
     const [geminiIds, groqIds] = await Promise.all([
-        geminiKey ? geminiModels(geminiKey) : Promise.resolve([]),
-        groqKey ? groqModels(groqKey) : Promise.resolve([]),
+        geminiKey ? geminiModels(geminiKey, 5) : Promise.resolve([]),
+        groqKey ? groqModels(groqKey, 3) : Promise.resolve([]),
     ]);
 
     // Provider fallback chain (BEST → GOOD → LAST RESORT)
@@ -123,11 +123,17 @@ exports.handler = async (event, context) => {
     }
 
     const errors = [];
+    const rateLimitedFamilies = new Set();
+    const familyOf = name => name.startsWith('Gemini ') ? 'gemini' : name.endsWith('(Groq)') ? 'groq' : 'openrouter';
 
     for (const provider of providers) {
+        const family = familyOf(provider.name);
+        if (rateLimitedFamilies.has(family)) {
+            errors.push(`${provider.name}: skipped (${family} already rate-limited this request)`);
+            continue;
+        }
+
         const budget = remainingBudget();
-        // Don't start an attempt we can't finish — return the accumulated error
-        // rather than letting the platform kill the whole invocation.
         if (budget < MIN_ATTEMPT_MS) {
             errors.push(`${provider.name}: skipped (out of time budget)`);
             break;
@@ -142,6 +148,7 @@ exports.handler = async (event, context) => {
         } catch (err) {
             console.warn(`[ai-proxy] ❌ ${provider.name}: ${err.message}`);
             errors.push(`${provider.name}: ${err.message}`);
+            if (/\[429\]/.test(err.message)) rateLimitedFamilies.add(family);
         }
     }
 
