@@ -4,20 +4,7 @@
 
 import { mapLimit, fetchWithTimeout, parseYMD, addDays, weekdayName } from './util.js';
 
-// ── AI Provider Definitions (direct calls — local dev only) ───────
-const AI_PROVIDERS = [
-    // TIER 1: Gemini 2.5 Flash — best quality, TTFT 0.37s. Free: 10 RPM / 250 RPD.
-    { name: 'Gemini 2.5 Flash', model: 'gemini-2.5-flash', type: 'gemini' },
-    { name: 'Gemini 2.5 Flash Lite', model: 'gemini-2.5-flash-lite', type: 'gemini' },
-
-    // TIER 2: Groq — 1–3s full response, 14,400 req/day free. Catches Gemini 429s.
-    { name: 'Llama 3.3 70B Versatile (Groq)', model: 'llama-3.3-70b-versatile', type: 'groq' },
-    { name: 'Llama 3.1 8B Instant (Groq)', model: 'llama-3.1-8b-instant', type: 'groq' },
-
-    // TIER 3: OpenRouter — 50 req/day free (cut Apr 2025). Last resort only.
-    { name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' },
-];
-
+// ── Endpoints & limits ───────────────────────────────────────
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GROQ_BASE = 'https://api.groq.com/openai/v1/chat/completions';
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1/chat/completions';
@@ -30,6 +17,79 @@ const REQUEST_TIMEOUT_MS = 25000;  // direct provider calls (local dev)
 const PROXY_TIMEOUT_MS = 9500;     // the function itself gives up at ~9s
 const IMAGE_CONCURRENCY = 6;       // parallel Unsplash lookups
 const MAX_ITINERARY_CHUNKS = 8;    // 8 × 7 days = 56-day ceiling on AI calls
+
+// ── AI Provider Definitions (direct calls — local dev only) ───────
+// Model IDs are discovered from each provider's list endpoint rather than
+// hardcoded: providers retire IDs without notice, and a stale one returns a 404
+// that is indistinguishable from a bad key.
+const EXCLUDED_MODELS = /embed|aqa|imagen|veo|image-generation|tts|audio|realtime|live|guard|whisper|learnlm/i;
+
+function scoreModel(name) {
+    const n = name.toLowerCase();
+    if (EXCLUDED_MODELS.test(n)) return -1;
+    let score = 0;
+    if (/flash|instant|mini|lite/.test(n)) score += 100;
+    if (/pro|large|70b/.test(n)) score += 40;
+    const version = n.match(/(\d+(?:\.\d+)?)/);
+    if (version) score += Math.min(60, parseFloat(version[1]) * 12);
+    if (/latest/.test(n)) score += 25;
+    if (/preview|exp|experimental|beta/.test(n)) score -= 45;
+    if (/lite/.test(n)) score -= 15;
+    if (/thinking/.test(n)) score -= 30;
+    return score;
+}
+
+const rankModels = (names, limit) => names
+    .map(name => ({ name, score: scoreModel(name) }))
+    .filter(m => m.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(m => m.name);
+
+let _modelCache = null;
+
+async function discoverProviders(config) {
+    if (_modelCache) return _modelCache;
+    const providers = [];
+
+    if (config.geminiKey) {
+        let ids = ['gemini-flash-latest', 'gemini-2.0-flash'];
+        try {
+            const res = await fetchWithTimeout(
+                `${GEMINI_BASE}?key=${encodeURIComponent(config.geminiKey)}&pageSize=200`, {}, 6000);
+            if (res.ok) {
+                const data = await res.json();
+                const found = rankModels((data.models || [])
+                    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+                    .map(m => String(m.name || '').replace(/^models\//, '')), 3);
+                if (found.length) ids = found;
+            }
+        } catch (err) { console.warn('[models] Gemini list failed:', err.message); }
+        ids.forEach(model => providers.push({ name: `Gemini ${model}`, model, type: 'gemini' }));
+    }
+
+    if (config.groqKey) {
+        let ids = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+        try {
+            const res = await fetchWithTimeout('https://api.groq.com/openai/v1/models', {
+                headers: { Authorization: `Bearer ${config.groqKey}` },
+            }, 6000);
+            if (res.ok) {
+                const data = await res.json();
+                const found = rankModels((data.data || []).map(m => String(m.id || '')), 2);
+                if (found.length) ids = found;
+            }
+        } catch (err) { console.warn('[models] Groq list failed:', err.message); }
+        ids.forEach(model => providers.push({ name: `${model} (Groq)`, model, type: 'groq' }));
+    }
+
+    if (config.openrouterKey) {
+        providers.push({ name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' });
+    }
+
+    _modelCache = providers;
+    return providers;
+}
 
 // Whether the serverless proxy is reachable. `null` = not probed yet.
 // Probing rather than hostname-sniffing means `netlify dev` on localhost works too.
@@ -96,11 +156,7 @@ async function smartAICall(prompt, config, onProviderSwitch) {
     }
 
     // Local dev: call APIs directly using keys from js/env.local.js
-    for (const provider of AI_PROVIDERS) {
-        if (provider.type === 'groq' && !config.groqKey) continue;
-        if (provider.type === 'gemini' && !config.geminiKey) continue;
-        if (provider.type === 'openrouter' && !config.openrouterKey) continue;
-
+    for (const provider of await discoverProviders(config)) {
         if (onProviderSwitch) onProviderSwitch(provider.name);
         try {
             let text;
@@ -319,7 +375,118 @@ These are the coordinates of "${stayName}" in ${cityHint || 'India'}. If you are
     return null;
 }
 
-// ── API Call 2: Fetch Unsplash Images ────────────────────────
+// ── API Call 2: Place photos ──────────────────────────────────
+//
+// Chain: Wikipedia → Unsplash → generated SVG.
+//
+// Wikipedia first because it returns a photo *of that specific landmark*,
+// whereas an Unsplash keyword search returns something merely evocative — and
+// the old Picsum fallback returned a completely unrelated stock photo, which is
+// actively misleading on a travel itinerary.
+
+const WIKI_API = 'https://en.wikipedia.org/w/api.php';
+const WIKI_CONCURRENCY = 3;          // anonymous API bursts get 429'd
+const WIKI_BACKOFF_MS = 90000;
+let _wikiBackoffUntil = 0;
+
+// Article kinds that match a landmark's name but aren't the landmark.
+const WIKI_WRONG_KIND = /\b(metro|railway|bus|train)\s+station\b|\bairport\b|\(disambiguation\)|\bmetro\b|\bdiscography\b|\bfilm\b|\b\d{4} film\b/i;
+const WIKI_STOPWORDS = new Set(['the', 'of', 'a', 'an', 'and', 'in', 'at', 'de', 'la']);
+
+const wikiTokens = str => String(str).toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')       // drop "(Delhi)" style qualifiers
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t && !WIKI_STOPWORDS.has(t));
+
+/** Levenshtein distance, capped early — inputs here are single short words. */
+function editDistance(a, b) {
+    if (a === b) return 0;
+    if (Math.abs(a.length - b.length) > 3) return 99;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const row = [i];
+        for (let j = 1; j <= b.length; j++) {
+            row[j] = Math.min(
+                prev[j] + 1,
+                row[j - 1] + 1,
+                prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+            );
+        }
+        prev = row;
+    }
+    return prev[b.length];
+}
+
+/**
+ * Transliterated names rarely agree on spelling — Wikipedia files "Qutub Minar"
+ * under "Qutb Minar". An exact token match would reject the real article and
+ * hand the win to "Mini Qutub Minar", so allow a small edit distance.
+ */
+function tokenMatches(a, b) {
+    if (a === b) return true;
+    const longest = Math.max(a.length, b.length);
+    if (longest < 4) return false;
+    return editDistance(a, b) <= (longest >= 6 ? 2 : 1);
+}
+
+/**
+ * Best image for a named place from Wikipedia, in one request:
+ * `generator=search` finds candidate articles, `prop=pageimages` returns their
+ * lead photos. Ranking has to be strict — a plain "does the title contain the
+ * name" test happily returns "Mini Qutub Minar" for "Qutub Minar", and
+ * "Hauz Khas metro station" for "Hauz Khas".
+ */
+async function wikipediaImage(name, city) {
+    if (Date.now() < _wikiBackoffUntil) return null;
+
+    const query = [name, city].filter(Boolean).join(' ');
+    const url = `${WIKI_API}?action=query&format=json&origin=*`
+        + `&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=6&gsrnamespace=0`
+        + `&prop=pageimages&piprop=thumbnail&pithumbsize=800&pilimit=6`;
+
+    const res = await fetchWithTimeout(url, {}, 8000);
+    if (res.status === 429 || res.status === 403) {
+        // Back off for the whole session rather than hammering a limiter.
+        _wikiBackoffUntil = Date.now() + WIKI_BACKOFF_MS;
+        throw new Error(`rate limited (${res.status})`);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const data = await res.json();
+    const pages = Object.values(data?.query?.pages || {}).filter(p => p.thumbnail?.source);
+    if (!pages.length) return null;
+
+    const wanted = wikiTokens(name);
+    const cityTokens = new Set(wikiTokens(city));
+    if (!wanted.length) return null;
+
+    const scored = pages.map(p => {
+        const title = String(p.title || '');
+        const titleTokens = wikiTokens(title);
+        const titleSet = new Set(titleTokens);
+
+        const coverage = wanted.filter(w => titleTokens.some(t => tokenMatches(w, t))).length / wanted.length;
+        // Words the article adds that we didn't ask for — "mini", "station".
+        // The city name doesn't count; "Jama Masjid, Delhi" is the right article.
+        const extra = titleTokens.filter(t =>
+            !wanted.some(w => tokenMatches(w, t)) && !cityTokens.has(t)).length;
+
+        let score = coverage * 2 - extra * 0.4;
+        const sameLength = titleTokens.length === wanted.length;
+        if (sameLength && coverage === 1) score += 1;                   // same place, maybe spelled differently
+        if (WIKI_WRONG_KIND.test(title)) score -= 2;
+        score -= (p.index ?? 9) * 0.02;                                 // slight nod to search rank
+
+        return { url: p.thumbnail.source, title, coverage, score };
+    })
+        // Require most of the name to appear, so "Red Fort" can't match "Fort Worth".
+        .filter(p => p.coverage >= 0.6 && p.score > 0.8)
+        .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.url || null;
+}
+
 export async function fetchPlaceImages(placeItems, unsplashKey, { hasImages = false } = {}) {
     const items = placeItems.map(p => (typeof p === 'string' ? { name: p, location: '' } : p));
     const cache = {};
@@ -328,12 +495,7 @@ export async function fetchPlaceImages(placeItems, unsplashKey, { hasImages = fa
     const directKey = unsplashKey && unsplashKey.length > 10 ? unsplashKey : '';
     const canProxy = _proxyAvailable !== false && (hasImages || !looksLikeLocalStatic());
 
-    if (!directKey && !canProxy) {
-        for (const { name } of items) cache[name] = picsumFallback(name);
-        return cache;
-    }
-
-    const lookup = async (query) => {
+    const unsplashLookup = async (query) => {
         if (canProxy) {
             try {
                 const proxyUrl = `${PROXY_IMAGES}?query=${encodeURIComponent(query)}&per_page=3&orientation=landscape`;
@@ -341,8 +503,7 @@ export async function fetchPlaceImages(placeItems, unsplashKey, { hasImages = fa
                 if (res.status === 404) _proxyAvailable = false;
                 else if (res.ok) {
                     const data = await res.json();
-                    if (data.results?.length) return data.results;
-                    return [];
+                    return data.results || [];
                 }
             } catch { /* fall through to a direct call if we have a key */ }
         }
@@ -354,48 +515,96 @@ export async function fetchPlaceImages(placeItems, unsplashKey, { hasImages = fa
         return data.results || [];
     };
 
-    // Run lookups concurrently — the old sequential loop made a 14-place grid
-    // wait for 14 round trips in series.
-    await mapLimit(items, IMAGE_CONCURRENCY, async ({ name, location }) => {
+    // Pass 1 — Wikipedia, at a gentler concurrency than Unsplash: the anonymous
+    // API returns 429 for bursts, and one 429 backs the whole session off.
+    await mapLimit(items, WIKI_CONCURRENCY, async ({ name, location }) => {
         try {
-            const cleanName = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
-            const cityOnly = (location || '').split(',')[0].replace(/[^a-zA-Z0-9 ]/g, '').trim();
-            const specificQuery = [cleanName, cityOnly].filter(Boolean).join(' ');
-
-            let results = await lookup(specificQuery);
-            if (!results.length && cityOnly) results = await lookup(cleanName);
-
-            // Prefer photos whose description/tags actually mention the place.
-            const nameWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 3);
-            const scored = results
-                .map(r => {
-                    const haystack = [r.description || '', r.alt_description || '', r.tags?.map(t => t.title).join(' ') || '']
-                        .join(' ').toLowerCase();
-                    return { url: r.urls?.small, score: nameWords.filter(w => haystack.includes(w)).length };
-                })
-                .filter(r => r.url)
-                .sort((a, b) => b.score - a.score);
-
-            cache[name] = scored[0]?.url || picsumFallback(name);
+            const wiki = await wikipediaImage(name, (location || '').split(',')[0].trim());
+            if (wiki) cache[name] = wiki;
         } catch (err) {
-            console.warn(`[Unsplash] "${name}":`, err.message);
-            cache[name] = picsumFallback(name);
+            console.warn(`[wikipedia] "${name}":`, err.message);
         }
+    });
+
+    // Pass 2 — anything Wikipedia couldn't place falls through to Unsplash,
+    // which is pretty and thematically right but not necessarily this place.
+    const remaining = items.filter(({ name }) => !cache[name]);
+    await mapLimit(remaining, IMAGE_CONCURRENCY, async ({ name, location }) => {
+        const cityOnly = (location || '').split(',')[0].trim();
+
+        if (directKey || canProxy) {
+            try {
+                const cleanName = name.replace(/[^a-zA-Z0-9 ]/g, '').trim();
+                const cleanCity = cityOnly.replace(/[^a-zA-Z0-9 ]/g, '').trim();
+                let results = await unsplashLookup([cleanName, cleanCity].filter(Boolean).join(' '));
+                if (!results.length && cleanCity) results = await unsplashLookup(cleanName);
+
+                const nameWords = cleanName.toLowerCase().split(' ').filter(w => w.length > 3);
+                const best = results
+                    .map(r => {
+                        const haystack = [r.description || '', r.alt_description || '', r.tags?.map(t => t.title).join(' ') || '']
+                            .join(' ').toLowerCase();
+                        return { url: r.urls?.regular || r.urls?.small, score: nameWords.filter(w => haystack.includes(w)).length };
+                    })
+                    .filter(r => r.url)
+                    .sort((a, b) => b.score - a.score)[0];
+
+                if (best) { cache[name] = best.url; return; }
+            } catch (err) {
+                console.warn(`[unsplash] "${name}":`, err.message);
+            }
+        }
+
+        // Last resort: a labelled placeholder, honest about having no photo.
+        cache[name] = svgPlaceholder(name);
     });
 
     return cache;
 }
 
-export function picsumFallback(name) {
-    const seed = Math.abs(name.split('').reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % 1000;
-    return `https://picsum.photos/seed/${seed}/400/300`;
+const PLACEHOLDER_PALETTE = [
+    ['#4338ca', '#7c3aed'], ['#0f766e', '#059669'], ['#b45309', '#d97706'],
+    ['#9f1239', '#e11d48'], ['#1d4ed8', '#0ea5e9'], ['#7e22ce', '#c026d3'],
+];
+
+/**
+ * A generated card showing the place's name — used when no real photo exists.
+ * Wraps to two lines so long names stay readable instead of overflowing.
+ */
+export function svgPlaceholder(name) {
+    const clean = String(name || 'Place').replace(/[<>&"']/g, '').trim();
+    const hash = Math.abs([...clean].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7));
+    const [from, to] = PLACEHOLDER_PALETTE[hash % PLACEHOLDER_PALETTE.length];
+
+    // Break onto a second line at the nearest space past the midpoint.
+    const label = clean.length > 30 ? clean.slice(0, 29) + '…' : clean;
+    let line1 = label, line2 = '';
+    if (label.length > 16) {
+        const cut = label.lastIndexOf(' ', Math.ceil(label.length / 2) + 6);
+        if (cut > 4) { line1 = label.slice(0, cut); line2 = label.slice(cut + 1); }
+    }
+    const size = line1.length > 20 ? 26 : 30;
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/>
+</linearGradient></defs>
+<rect width="400" height="300" fill="url(#g)"/>
+<circle cx="330" cy="60" r="90" fill="#ffffff" opacity="0.07"/>
+<circle cx="60" cy="255" r="70" fill="#ffffff" opacity="0.05"/>
+<text x="200" y="${line2 ? 138 : 152}" text-anchor="middle" fill="#ffffff" opacity="0.95"
+      font-family="Inter, Helvetica, Arial, sans-serif" font-size="${size}" font-weight="700">${escapeXml(line1)}</text>
+${line2 ? `<text x="200" y="176" text-anchor="middle" fill="#ffffff" opacity="0.95"
+      font-family="Inter, Helvetica, Arial, sans-serif" font-size="${size}" font-weight="700">${escapeXml(line2)}</text>` : ''}
+<text x="200" y="${line2 ? 214 : 190}" text-anchor="middle" fill="#ffffff" opacity="0.55"
+      font-family="Inter, Helvetica, Arial, sans-serif" font-size="13">No photo available</text>
+</svg>`;
+
+    return `data:image/svg+xml,${encodeURIComponent(svg.replace(/\s+/g, ' '))}`;
 }
 
-export function svgPlaceholder(name) {
-    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
-    const color = colors[Math.abs(name.charCodeAt(0) || 0) % colors.length];
-    const label = encodeURIComponent(String(name).slice(0, 20).replace(/[<>&"']/g, ''));
-    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300'%3E%3Crect fill='${color.slice(1)}' width='400' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='0.3em' fill='%23fff' font-family='Arial' font-size='24'%3E${label}%3C/text%3E%3C/svg%3E`;
+function escapeXml(str) {
+    return String(str).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
 }
 
 // ── API Call 3: Schedule a pre-clustered zone plan ────────────

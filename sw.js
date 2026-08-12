@@ -3,7 +3,7 @@
 //  Bump CACHE_VERSION whenever the shell files change.
 // ============================================================
 
-const CACHE_VERSION = 'atp-v4';
+const CACHE_VERSION = 'atp-v5';
 const SHELL = [
     '/',
     '/index.html',
@@ -84,15 +84,13 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // Cross-origin (tiles, photos, CDN libs): cache opaque responses so a saved
-    // trip still renders its thumbnails offline.
-    event.respondWith(
-        caches.match(request).then(cached => cached || fetch(request).then(res => {
-            if (res.ok || res.type === 'opaque') {
-                const copy = res.clone();
-                caches.open(CACHE_VERSION).then(c => c.put(request, copy)).catch(() => { });
-            }
-            return res;
-        }).catch(() => cached || Response.error()))
-    );
+    // Cross-origin (tiles, photos, fonts, CDN libs): do NOT intercept.
+    //
+    // A service worker's fetch() is subject to the page's connect-src CSP, but
+    // the browser's own loads of those same assets are governed by the far
+    // broader img-src/style-src/script-src. Proxying them through here turned
+    // legal <link>/<img> loads into blocked connect-src requests, which is why
+    // the fonts and Leaflet CSS failed. Letting them pass through untouched
+    // keeps the strict CSP and loads them correctly; the cost is that
+    // cross-origin assets aren't available offline.
 });

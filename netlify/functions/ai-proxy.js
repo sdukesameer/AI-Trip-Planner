@@ -2,6 +2,7 @@
 // Keeps API keys server-side. Frontend calls /.netlify/functions/ai-proxy
 
 const { isAllowedOrigin, rateLimit, json, text } = require('./_shared');
+const { geminiModels, groqModels } = require('./_models');
 
 // Netlify's synchronous function limit is 10s. Budget the whole fallback chain
 // inside that so we return a real error instead of a platform 502.
@@ -94,19 +95,32 @@ exports.handler = async (event, context) => {
     const GROQ = 'https://api.groq.com/openai/v1/chat/completions';
     const OPENROUTER = 'https://openrouter.ai/api/v1/chat/completions';
 
+    // Model IDs are discovered at runtime rather than hardcoded — providers
+    // retire them without notice, and a stale ID is a 404 that looks exactly
+    // like a broken key.
+    const [geminiIds, groqIds] = await Promise.all([
+        geminiKey ? geminiModels(geminiKey) : Promise.resolve([]),
+        groqKey ? groqModels(groqKey) : Promise.resolve([]),
+    ]);
+
     // Provider fallback chain (BEST → GOOD → LAST RESORT)
     const providers = [
-        // TIER 1: Gemini 2.5 Flash — best quality, ~0.4s TTFT. Free: 10 RPM / 250 RPD.
-        { name: 'Gemini 2.5 Flash', fn: gemini('gemini-2.5-flash'), skip: !geminiKey },
-        { name: 'Gemini 2.5 Flash Lite', fn: gemini('gemini-2.5-flash-lite'), skip: !geminiKey },
+        // TIER 1: Gemini — best quality, ~0.4s TTFT. Free: 10 RPM / 250 RPD.
+        ...geminiIds.map(id => ({ name: `Gemini ${id}`, fn: gemini(id) })),
 
         // TIER 2: Groq — LPU hardware, 1–3s full response, 14,400 req/day free.
-        { name: 'Llama 3.3 70B Versatile (Groq)', fn: chat(GROQ, groqKey, 'llama-3.3-70b-versatile'), skip: !groqKey },
-        { name: 'Llama 3.1 8B Instant (Groq)', fn: chat(GROQ, groqKey, 'llama-3.1-8b-instant'), skip: !groqKey },
+        ...groqIds.map(id => ({ name: `${id} (Groq)`, fn: chat(GROQ, groqKey, id) })),
 
         // TIER 3: OpenRouter — 50 req/day on the free tier. Last resort.
-        { name: 'OpenRouter Llama 3.1 8B Free', fn: chat(OPENROUTER, openrouterKey, 'meta-llama/llama-3.1-8b-instruct:free'), skip: !openrouterKey },
-    ].filter(p => !p.skip);
+        ...(openrouterKey ? [{
+            name: 'OpenRouter Llama 3.1 8B Free',
+            fn: chat(OPENROUTER, openrouterKey, 'meta-llama/llama-3.1-8b-instruct:free'),
+        }] : []),
+    ];
+
+    if (!providers.length) {
+        return json(503, { error: 'No usable AI model found for the configured keys' });
+    }
 
     const errors = [];
 

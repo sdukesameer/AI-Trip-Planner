@@ -4,7 +4,7 @@
 
 import {
     fetchFamousPlaces, fetchMorePlaces, searchNearbyPlaces,
-    fetchPlaceImages, scheduleZonePlan, rescheduleDay, getLastProvider, picsumFallback, svgPlaceholder,
+    fetchPlaceImages, scheduleZonePlan, rescheduleDay, getLastProvider, svgPlaceholder,
     enrichCustomPlaces, fetchWeatherForDays, weatherEmoji, proxyAvailability,
     geocodeStay, suggestAlternatives, generatePackingList, generatePracticalInfo
 } from './api.js';
@@ -380,7 +380,9 @@ function renderChips() {
 }
 
 // ── Image fallbacks ───────────────────────────────────────────
-const fallbackImg = name => picsumFallback(name);
+// A labelled placeholder, never a random stock photo: showing an unrelated
+// image next to "Red Fort" is worse than showing no image at all.
+const fallbackImg = name => svgPlaceholder(name);
 
 // Broken remote images swap to a generated SVG. Delegated in the capture phase
 // because `error` does not bubble — this replaces the old inline onerror="…",

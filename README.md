@@ -72,7 +72,7 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 | 📍 Geographic Clustering | Done in code (k-means++ + 2-opt), not requested from the model — see [Zone-First Planning](#zone-first-planning) |
 | 🔍 Place Discovery | Photon geocode "Search Nearby" + AI enrichment; Nominatim for coordinate lookup |
 | 🎯 Custom Places | Pre-seed from home screen textarea or paste list in discovery screen; AI auto-enriches names |
-| 📸 Place Images | Unsplash API with context-aware queries (place name + city); Picsum fallback; SVG placeholder |
+| 📸 Place Images | Wikipedia/Wikimedia lead photo of the actual landmark → Unsplash → generated placeholder card |
 | 💾 Save & Share | localStorage (up to 5 trips, ~30 KB each); URL hash encoding for sharing; trip load/restore |
 | 📄 Rich PDF Export | jsPDF: place thumbnails, coloured day banners, commute info, entry fee breakdown, weather badges |
 | 📋 Emoji Copy Text | WhatsApp-friendly itinerary with flag emojis, time slots, → arrows, metadata |
@@ -118,7 +118,7 @@ Fully functional. Try uploading a 15-day trip to see storage usage in action.
 | **AI (tier 1b)** | [Google Gemini API](https://ai.google.dev/) — `gemini-2.5-flash-lite` (faster, lower cost) |
 | **AI (tier 2)** | [Groq API](https://groq.com/) — `llama-3.3-70b-versatile` then `llama-3.1-8b-instant` |
 | **AI (safety net)** | [OpenRouter API](https://openrouter.ai/) — `meta-llama/llama-3.1-8b-instruct:free` |
-| **Images** | [Unsplash API](https://unsplash.com/developers) + Picsum fallback |
+| **Images** | [Wikipedia PageImages](https://www.mediawiki.org/wiki/Extension:PageImages) (real photo of the landmark) → [Unsplash API](https://unsplash.com/developers) → generated SVG |
 | **Weather** | [OpenWeatherMap API](https://openweathermap.org/api) (optional, non-blocking) |
 | **Geocoding** | [Photon API](https://photon.komoot.io/) for autocomplete; [Nominatim](https://nominatim.openstreetmap.org/) for coordinate lookup (both OSM-backed, no key) |
 | **Routing** | [OSRM](https://project-osrm.org/) public demo server (road distance, duration, geometry) |
@@ -575,6 +575,36 @@ to haversine distance × a per-mode detour factor, and the UI says so rather tha
 estimate as measured. Fares come from a per-mode cost model (`js/routing.js`), with public
 transport charged per head and taxis charged per vehicle.
 
+### Place Photography
+
+A keyword search returns something *evocative*; it does not return the place. The old chain ended
+at Picsum, which serves an arbitrary stock photo — an unrelated image captioned "Red Fort" is worse
+than no image at all. The chain is now:
+
+1. **Wikipedia** — `generator=search` + `prop=pageimages` returns the lead photo of the matching
+   article in one request. Ranking is deliberately strict, because a naive "title contains the name"
+   test returns *Mini Qutub Minar* for "Qutub Minar" and *Hauz Khas metro station* for "Hauz Khas":
+   - coverage of the query's tokens in the title, using a small edit-distance tolerance so
+     transliterations match (Wikipedia files "Qutub Minar" under **Qutb** Minar)
+   - a penalty per extra word the article adds that you didn't ask for (the city name is exempt —
+     "Jama Masjid, Delhi" is the right article)
+   - a hard penalty for article kinds that share a name but aren't the place (metro stations, airports,
+     disambiguation pages, films)
+2. **Unsplash** — thematically right, scored by keyword overlap with the photo's description and tags
+3. **Generated SVG card** with the place name, honest that no photo was found
+
+Wikipedia runs at concurrency 3 (Unsplash at 6) and a single `429` backs the whole session off for
+90 seconds, since the anonymous API rate-limits bursts.
+
+### Model Discovery
+
+Hardcoded model IDs rot. `gemini-2.5-flash` began returning
+`404 — no longer available to new users` in production and took the app down even though the key was
+fine. Both Google and Groq expose a list-models endpoint, so the proxy now asks what exists at request
+time and ranks the results (prefer fast `flash`/`instant` tiers, higher version numbers and `latest`
+aliases; avoid previews, embeddings, TTS and image models). Results are cached per warm container for
+30 minutes, with a static list as the last resort if listing itself fails.
+
 ### Map Safety
 
 `maps.js` fully tears down the map before reinit:
@@ -928,7 +958,15 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 
 ## Changelog
 
-### v2.1.0 (Current) — zone-first planning, real routing, editable itineraries
+### v2.1.1 (Current) — production hotfixes
+
+- 🔥 **`gemini-2.5-flash` started returning 404 "no longer available to new users"**, taking the deployed app down. Model IDs are now discovered from each provider's list-models endpoint and ranked at request time instead of hardcoded. Applies to Groq too, whose IDs are deprecated just as often. See [Model Discovery](#model-discovery).
+- 🔥 **The service worker broke Google Fonts and Leaflet's CSS.** It proxied cross-origin requests through its own `fetch()`, which is subject to the page's `connect-src` — so legitimate `<link>`/`<img>` loads (governed by the much broader `style-src`/`img-src`) were rejected as `connect-src` violations. Cross-origin requests are no longer intercepted.
+- 📸 **Much better place photos.** Wikipedia's lead image for the actual landmark is now tried first, then Unsplash. The Picsum fallback is gone — it served an *unrelated* stock photo, which is worse than showing none. See [Place Photography](#place-photography).
+- 🖼️ The no-photo placeholder is now a readable gradient card with a wrapped two-line name, instead of flat colour with clipped text.
+- 🔐 CSP updated for `en.wikipedia.org` / `upload.wikimedia.org`, and for the font and CDN origins so DevTools source-map fetches stop erroring.
+
+### v2.1.0 — zone-first planning, real routing, editable itineraries
 
 #### Planning
 
