@@ -34,6 +34,8 @@ exports.handler = async (event, context) => {
     const groqKey = process.env.GROQ_API_KEY;
     const openrouterKey = process.env.OPENROUTER_API_KEY;
 
+    console.log('[ai-proxy] keys present:', { gemini: !!geminiKey, groq: !!groqKey, openrouter: !!openrouterKey });
+
     if (!geminiKey && !groqKey && !openrouterKey) {
         return json(503, { error: 'No AI provider configured on the server' });
     }
@@ -105,11 +107,13 @@ exports.handler = async (event, context) => {
 
     // Provider fallback chain (BEST → GOOD → LAST RESORT)
     const providers = [
-        // TIER 1: Gemini — best quality, ~0.4s TTFT. Free: 10 RPM / 250 RPD.
-        ...geminiIds.map(id => ({ name: `Gemini ${id}`, fn: gemini(id) })),
-
-        // TIER 2: Groq — LPU hardware, 1–3s full response, 14,400 req/day free.
+        // TIER 1: Groq — LPU hardware, 1–3s full response, 14,400 req/day free,
+        // and no per-model "new user" gating surprises like Gemini has.
         ...groqIds.map(id => ({ name: `${id} (Groq)`, fn: chat(GROQ, groqKey, id) })),
+
+        // TIER 2: Gemini — great when it works, but free tier is only
+        // 10 RPM / 250 RPD and its model catalog can be inconsistent.
+        ...geminiIds.map(id => ({ name: `Gemini ${id}`, fn: gemini(id) })),
 
         // TIER 3: OpenRouter — 50 req/day on the free tier. Last resort.
         ...(openrouterKey ? [{
