@@ -2,7 +2,7 @@
 //  download.js — Itinerary export (PDF, text, calendar, clipboard)
 // ============================================================
 
-import { parseYMD, formatLongDate, formatWeekdayDate } from './util.js';
+import { parseYMD, formatLongDate, formatWeekdayDate, allowedImageUrl } from './util.js';
 
 const DAY_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1'];
 const DAY_EMOJIS = ['🟦', '🟩', '🟨', '🟥', '🟪', '🩷', '🩵', '🟧', '🟢', '🔵'];
@@ -257,7 +257,9 @@ export async function downloadAsPDF(itinerary, locations, startDate, endDate, im
     const allPlaceNames = [...new Set(itinerary.days.flatMap(d => d.places.map(p => p.name)))];
     const b64Cache = {};
     await Promise.all(allPlaceNames.map(async name => {
-        const url = imageCache[name];
+        // Screened against the CSP: fetching a disallowed host here throws a
+        // connect-src violation and aborts the export mid-render.
+        const url = allowedImageUrl(imageCache[name]);
         if (url && url.startsWith('http')) b64Cache[name] = await urlToBase64(url);
     }));
 

@@ -27,10 +27,44 @@ const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM<
 export function getDayColor(dayIndex) { return DAY_COLORS[dayIndex % DAY_COLORS.length]; }
 
 // ── Init map ─────────────────────────────────────────────────
-export function initMap(containerId, theme = 'dark') {
-    if (typeof L === 'undefined') {
-        return Promise.reject(new Error('Map library failed to load. Check your connection and reload.'));
+// Leaflet comes from a CDN, and CDNs occasionally fail or are blocked by an
+// extension. One missing script shouldn't cost the user their map, so wait
+// briefly for the original tag and then retry from the other host the CSP
+// already permits.
+const LEAFLET_FALLBACK = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
+let _leafletLoader = null;
+
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        const tag = document.createElement('script');
+        tag.src = src;
+        tag.crossOrigin = '';
+        tag.onload = resolve;
+        tag.onerror = () => reject(new Error(`Failed to load ${src}`));
+        document.head.appendChild(tag);
+    });
+}
+
+async function ensureLeaflet() {
+    if (typeof L !== 'undefined') return;
+
+    // The tag may simply still be in flight.
+    for (let waited = 0; waited < 3000 && typeof L === 'undefined'; waited += 100) {
+        await new Promise(r => setTimeout(r, 100));
     }
+    if (typeof L !== 'undefined') return;
+
+    _leafletLoader = _leafletLoader || loadScript(LEAFLET_FALLBACK);
+    await _leafletLoader;
+
+    if (typeof L === 'undefined') {
+        throw new Error('Map library failed to load. Check your connection and reload.');
+    }
+    console.warn('[maps] Leaflet recovered from the fallback CDN');
+}
+
+export async function initMap(containerId, theme = 'dark') {
+    await ensureLeaflet();
     currentTheme = theme;
     const container = document.getElementById(containerId);
     if (!container) return Promise.reject(new Error('Map container not found'));

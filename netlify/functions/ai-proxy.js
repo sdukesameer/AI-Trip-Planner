@@ -8,6 +8,12 @@ const { buildChain, markDead } = require('./_models');
 // inside that so we return a real error instead of a platform 502.
 const TOTAL_BUDGET_MS = 9000;
 const MIN_ATTEMPT_MS = 1200;
+// Time held back from the current attempt so the next provider still gets a
+// turn. Without this the first provider is handed the entire budget, and one
+// slow response turns the whole fallback chain into a single point of failure:
+// "gemini timed out after 9000ms / groq: skipped (out of time budget)" — a 502
+// even though the second provider was healthy and answers in about a second.
+const FALLBACK_RESERVE_MS = 3200;
 const MAX_PROMPT_CHARS = 12000;
 
 const DEFAULT_MAX_TOKENS = 2048;
@@ -141,8 +147,10 @@ exports.handler = async (event, context) => {
     const errors = [];
     let sawQuotaError = false;
 
-    for (const link of chain) {
+    for (let index = 0; index < chain.length; index++) {
+        const link = chain[index];
         const budget = remainingBudget();
+        const isLast = index === chain.length - 1;
         // Don't start an attempt we can't finish — return the accumulated error
         // rather than letting the platform kill the whole invocation.
         if (budget < MIN_ATTEMPT_MS) {
@@ -157,9 +165,16 @@ exports.handler = async (event, context) => {
             maxTokens = Math.max(512, Math.min(maxTokens, link.spec.tpm - promptTokens - 200));
         }
 
+        // Hold back a window for the next provider — but only while doing so
+        // still leaves this one a usable slot. Reserving unconditionally would
+        // starve the middle of a three-link chain instead of the end of it.
+        const withReserve = budget - FALLBACK_RESERVE_MS;
+        const attemptMs = (isLast || withReserve < MIN_ATTEMPT_MS) ? budget : withReserve;
+
         for (let attempt = 0; attempt < 2; attempt++) {
             try {
-                const result = await withTimeout(invoke(link, maxTokens), remainingBudget(), link.name);
+                const result = await withTimeout(
+                    invoke(link, maxTokens), Math.min(attemptMs, remainingBudget()), link.name);
                 if (result) {
                     console.log(`[ai-proxy] ✅ ${link.name} (${maxTokens} max tokens, after ${errors.length} failures)`);
                     return json(200, { text: result, providerUsed: link.name }, { 'Cache-Control': 'no-store' });

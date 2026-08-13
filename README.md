@@ -1004,7 +1004,19 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 
 ## Changelog
 
-### v2.2.0 (Current) — surviving free-tier limits
+### v2.2.1 (Current) — the fixes were shipping, but not running
+
+Reported from production: the console showed requests to an image provider that
+had already been deleted from the source, and the proxy logs showed the *new*
+model discovery working while the browser behaved like the old build.
+
+- 🔥 **The service worker served the previous release's JavaScript.** Same-origin assets were cached stale-while-revalidate, application code included — so after every deploy the browser ran the old `js/api.js` for a whole session. Shipped fixes appeared to do nothing, and removed code kept making requests the new CSP correctly blocked. App code (`/js/`, `/css/`) is now network-first with cache as an offline fallback only; other shell assets are unchanged. Verified by reproducing the stale read against the old strategy and confirming the new one picks up a changed file on a plain reload.
+- 🔥 **A slow provider consumed the entire fallback chain.** The first attempt was handed the whole 9-second budget, so one hung Gemini call produced `groq: skipped (out of time budget)` and a 502 — while Groq was healthy and answering in about a second. Each attempt now holds back a window for the next provider, unless it is the last or the reserve would leave no usable slot.
+- 🔒 **Image URLs are screened against the CSP** (`allowedImageUrl`). Saved trips outlive deploys, so trips stored before the stock-photo provider was removed still carried its URLs — a console error and a broken tile per place, and a failed fetch that aborted the PDF export. Disallowed sources now degrade to the generated placeholder, on render, on save, and on load.
+- 🗺️ **Leaflet recovers from a CDN failure** — it waits for the in-flight tag, then retries from the other host the CSP already allows, instead of failing the map outright.
+- ♿ **Modal close no longer hides focused content.** `aria-hidden` was applied before focus moved out, so the close button was hidden from assistive tech while the keyboard was still on it.
+
+### v2.2.0 — surviving free-tier limits
 
 Follow-up to the production outage. Discovery would return half a screen of
 places and then fail repeatedly, because every free provider had run dry.

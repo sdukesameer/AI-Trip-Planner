@@ -15,7 +15,7 @@ import { buildZonePlan, validateItinerary, reoptimiseDay, scheduleLocally } from
 import { attachRoutes, TRANSPORT_MODES, DEFAULT_MODE, formatDuration, routingAvailable } from './routing.js';
 import { CURRENCIES, DEFAULT_CURRENCY, formatMoney, estimateTripBudget } from './budget.js';
 import {
-    esc, safeUrl, debounce, LOCALE, ymd, parseYMD, todayLocal, addDays, diffDays,
+    esc, safeUrl, allowedImageUrl, debounce, LOCALE, ymd, parseYMD, todayLocal, addDays, diffDays,
     formatWeekdayDate, trapFocus
 } from './util.js';
 
@@ -172,10 +172,15 @@ function openModal(id) {
 function closeModal(id) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.classList.add('hidden');
-    el.setAttribute('aria-hidden', 'true');
+    // Move focus out FIRST. Marking a subtree aria-hidden while it still
+    // contains the focused element hides that element from assistive tech while
+    // the keyboard is inside it, which the browser rightly refuses to do.
     const release = _modalReleasers.get(id);
     if (release) { release(); _modalReleasers.delete(id); }
+    if (el.contains(document.activeElement)) document.activeElement.blur();
+
+    el.classList.add('hidden');
+    el.setAttribute('aria-hidden', 'true');
     if (!document.querySelector('.modal-overlay:not(.hidden)')) {
         document.body.classList.remove('modal-open');
     }
@@ -1076,7 +1081,7 @@ async function ensureImages(places, locFallback) {
 }
 
 function renderPlaceCard(place, container) {
-    const imgUrl = safeUrl(state.imageCache[place.name]) || fallbackImg(place.name);
+    const imgUrl = allowedImageUrl(state.imageCache[place.name]) || fallbackImg(place.name);
     const selected = state.selectedPlaces.some(p => p.name === place.name);
 
     const card = document.createElement('div');
@@ -1273,7 +1278,7 @@ function openPlaceModal(place) {
     imgEl.dataset.fbApplied = '';
     imgEl.dataset.placeName = place.name;
     imgEl.alt = place.name;
-    imgEl.src = safeUrl(state.imageCache[place.name]) || fallbackImg(place.name);
+    imgEl.src = allowedImageUrl(state.imageCache[place.name]) || fallbackImg(place.name);
 
     document.getElementById('place-detail-name').textContent = place.name;
     document.getElementById('place-detail-category').textContent = place.category || '';
@@ -1657,7 +1662,7 @@ function renderMeals(day) {
 }
 
 function renderPlaceRow(place, pIdx, dayColor, dayIdx) {
-    const img = safeUrl(state.imageCache[place.name]) || fallbackImg(place.name);
+    const img = allowedImageUrl(state.imageCache[place.name]) || fallbackImg(place.name);
     const commute = place.commute_from_prev;
 
     let commuteHTML = '';
@@ -2173,7 +2178,8 @@ function saveCurrentTrip() {
     // Only keep remote image URLs — base64 blobs would blow the quota instantly.
     const safeImageCache = {};
     for (const [k, v] of Object.entries(state.imageCache || {})) {
-        if (typeof v === 'string' && v.startsWith('http')) safeImageCache[k] = v;
+        const url = allowedImageUrl(v);
+        if (url && url.startsWith('http')) safeImageCache[k] = url;
     }
 
     const trip = {
@@ -2394,7 +2400,12 @@ async function loadSavedTrip(trip) {
     state.startDate = trip.startDate || '';
     state.endDate = trip.endDate || '';
     state.itinerary = trip.itinerary;
-    state.imageCache = { ...(trip.imageCache || {}) };
+    // Trips saved by older builds can carry image URLs from providers that are
+    // no longer in the CSP; drop them so they fall back to a placeholder.
+    state.imageCache = Object.fromEntries(
+        Object.entries(trip.imageCache || {})
+            .map(([name, url]) => [name, allowedImageUrl(url)])
+            .filter(([, url]) => url));
     state.aiProvider = '';
     state.weatherMap = {};
     state.stay = trip.stay || null;

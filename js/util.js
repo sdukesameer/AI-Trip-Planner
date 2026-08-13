@@ -21,6 +21,38 @@ export function safeUrl(url) {
     return '';
 }
 
+// Image hosts the Content-Security-Policy actually permits.
+const IMAGE_HOSTS = /^(upload\.wikimedia\.org|images\.unsplash\.com)$/i;
+
+/**
+ * Like safeUrl, but also checks the host against the CSP's `img-src`.
+ *
+ * Saved trips outlive deploys. A trip stored while the app still used a random
+ * stock-photo provider keeps those URLs forever, and after that provider was
+ * removed from the policy every one of them became a console error and a broken
+ * tile — and a failed fetch in the PDF export. Screening here means an
+ * unsupported source degrades to the generated placeholder instead.
+ *
+ * @returns {string} the URL if it can actually load, otherwise ''
+ */
+export function allowedImageUrl(url) {
+    const s = String(url || '').trim();
+    if (!s) return '';
+    if (/^data:image\//i.test(s)) return s;
+
+    // Root-relative paths are ours by definition. Protocol-relative ones are not.
+    if (s.startsWith('/') && !s.startsWith('//')) return s;
+
+    try {
+        // Parsed WITHOUT a base on purpose: with one, an arbitrary string like
+        // "not a url" resolves against the page and passes the same-origin test.
+        const parsed = new URL(s);
+        if (parsed.origin === window.location.origin) return s;
+        if (parsed.protocol === 'https:' && IMAGE_HOSTS.test(parsed.hostname)) return s;
+    } catch { /* not an absolute URL */ }
+    return '';
+}
+
 // ── Timing ────────────────────────────────────────────────────
 export function debounce(fn, ms) {
     let t = null;

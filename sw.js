@@ -3,7 +3,7 @@
 //  Bump CACHE_VERSION whenever the shell files change.
 // ============================================================
 
-const CACHE_VERSION = 'atp-v5';
+const CACHE_VERSION = 'atp-v6';
 const SHELL = [
     '/',
     '/index.html',
@@ -18,6 +18,7 @@ const SHELL = [
     '/js/budget.js',
     '/js/app-config.js',
     '/js/download.js',
+    '/js/places-osm.js',
     '/manifest.json',
     '/icons/favicon-32x32.png',
     '/icons/apple-touch-icon.png',
@@ -65,7 +66,31 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // Same-origin static assets: serve from cache, refresh in the background.
+    // Application code: network first, cache only as an offline fallback.
+    //
+    // This used to be stale-while-revalidate like everything else, and that was
+    // a serious mistake: after a deploy the browser kept running the PREVIOUS
+    // release's JavaScript, so shipped fixes appeared to have no effect and
+    // already-removed code (a dropped image provider) went on making requests
+    // the new CSP correctly blocked. Shell assets may be stale; app logic
+    // may not.
+    if (url.origin === self.location.origin && /^\/(js|css)\//.test(url.pathname)) {
+        event.respondWith(
+            fetch(request)
+                .then(res => {
+                    if (res.ok) {
+                        const copy = res.clone();
+                        caches.open(CACHE_VERSION).then(c => c.put(request, copy)).catch(() => { });
+                    }
+                    return res;
+                })
+                .catch(() => caches.match(request).then(r => r || Response.error()))
+        );
+        return;
+    }
+
+    // Other same-origin assets (icons, manifest): serve from cache, refresh in
+    // the background. These are content-stable, so staleness is harmless.
     if (url.origin === self.location.origin) {
         event.respondWith(
             caches.match(request).then(cached => {
