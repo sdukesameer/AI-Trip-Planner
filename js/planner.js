@@ -360,6 +360,143 @@ export function buildZonePlan(places, opts) {
     };
 }
 
+// ── Local scheduling (no AI) ──────────────────────────────────
+//
+// The geography, grouping and ordering are all computed here already. What the
+// model adds is prose and opening hours — valuable, but not structural. So when
+// every provider is out of quota we can still hand back a usable itinerary
+// instead of an error screen.
+//
+// Nothing here is invented: times come from the traveller's own start time and
+// typical visit lengths. Fields we genuinely cannot know (entry fees, opening
+// hours, named restaurants) are left empty rather than guessed at, because a
+// confidently wrong opening time is worse than a blank one.
+
+/** Typical time on site, in minutes, by category. */
+const VISIT_MINUTES = {
+    Heritage: 120, Museum: 105, Religious: 60, Nature: 75,
+    Market: 90, Entertainment: 120, Food: 60,
+};
+const DEFAULT_VISIT_MINUTES = 90;
+const TRANSIT_MINUTES = 25;   // within a zone; routing.js replaces this with real legs
+
+/** "10:00 AM" / "10:00" → minutes since midnight. */
+function parseClock(value, fallback = 600) {
+    const m = /^(\d{1,2}):(\d{2})\s*(am|pm)?$/i.exec(String(value || '').trim());
+    if (!m) return fallback;
+    let hours = Number(m[1]) % 12;
+    if (!m[3]) hours = Number(m[1]) % 24;
+    else if (m[3].toLowerCase() === 'pm') hours += 12;
+    return Math.min(24 * 60 - 1, hours * 60 + Number(m[2]));
+}
+
+function formatClock(minutes) {
+    const total = ((Math.round(minutes) % 1440) + 1440) % 1440;
+    const h24 = Math.floor(total / 60);
+    const mins = String(total % 60).padStart(2, '0');
+    const suffix = h24 < 12 ? 'AM' : 'PM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${h12}:${mins} ${suffix}`;
+}
+
+function formatDuration(minutes) {
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    const hourPart = `${hours} hr${hours === 1 ? '' : 's'}`;
+    return rest ? `${hourPart} ${rest} min` : hourPart;
+}
+
+/** The category that best characterises a day, for its theme label. */
+function dominantCategory(places) {
+    const counts = {};
+    places.forEach(p => { if (p.category) counts[p.category] = (counts[p.category] || 0) + 1; });
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return best ? best[0] : '';
+}
+
+const THEME_BY_CATEGORY = {
+    Heritage: 'Heritage & landmarks', Museum: 'Museums & galleries',
+    Religious: 'Temples & sacred sites', Nature: 'Parks & the outdoors',
+    Market: 'Markets & street life', Entertainment: 'Sights & entertainment',
+    Food: 'Food & flavours',
+};
+
+/**
+ * Build a complete itinerary from a zone plan without calling any AI.
+ *
+ * @param {{days: Array}} plan       output of buildZonePlan
+ * @param {{prefs?: object, locations?: string[]}} opts
+ * @returns {{summary: string, days: Array, offline: boolean}}
+ */
+export function scheduleLocally(plan, { prefs = {}, locations = [] } = {}) {
+    const startMinutes = parseClock(prefs.startTime, 600);
+
+    const days = (plan.days || []).filter(d => d.places.length).map(planDay => {
+        let clock = startMinutes;
+        let lunchInserted = false;
+        const meals = [];
+
+        const places = planDay.places.map((place, index) => {
+            if (index > 0) clock += TRANSIT_MINUTES;
+
+            // Slot lunch into the natural gap rather than mid-visit — but never
+            // before the day has started, or an afternoon start begins with lunch.
+            if (!lunchInserted && index > 0 && clock >= 12 * 60 + 30) {
+                meals.push({
+                    type: 'Lunch',
+                    time: formatClock(clock),
+                    suggestion: 'A local spot near your next stop',
+                    area: planDay.location || '',
+                    approxCost: '',
+                });
+                clock += 60;
+                lunchInserted = true;
+            }
+
+            const minutes = VISIT_MINUTES[place.category] || DEFAULT_VISIT_MINUTES;
+            const arrivalTime = formatClock(clock);
+            clock += minutes;
+
+            return {
+                ...place,
+                desc: place.shortDesc || '',
+                category: place.category || '',
+                arrivalTime,
+                visitDuration: formatDuration(minutes),
+                // Left blank on purpose: a guessed opening time or entry fee
+                // would look authoritative and be wrong.
+                openingHours: '',
+                closedDays: '',
+                entryFee: '',
+                bestTime: '',
+                closedNote: '',
+                accessibility: '',
+                commute_from_prev: null,
+            };
+        });
+
+        const category = dominantCategory(places);
+        return {
+            day: planDay.day,
+            date: planDay.date,
+            location: planDay.location,
+            theme: THEME_BY_CATEGORY[category] || 'Exploring',
+            zoneName: '',
+            spreadKm: planDay.spreadKm,
+            meals,
+            places,
+        };
+    });
+
+    const where = locations.filter(Boolean).join(' & ') || 'your destinations';
+    return {
+        summary: `${days.length}-day trip across ${where}, grouped by area to keep travel between stops short.`,
+        days,
+        offline: true,
+    };
+}
+
 // ── Validation ────────────────────────────────────────────────
 /**
  * Sanity-check a finished itinerary and describe what looks wrong, so the UI

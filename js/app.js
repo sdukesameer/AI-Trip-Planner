@@ -8,9 +8,10 @@ import {
     enrichCustomPlaces, fetchWeatherForDays, weatherEmoji, proxyAvailability,
     geocodeStay, suggestAlternatives, generatePackingList, generatePracticalInfo
 } from './api.js';
+import { discoverPlacesOSM } from './places-osm.js';
 import { initMap, plotItinerary, focusDay, focusPlace, resetFocus, setMapTheme, refreshMapSize } from './maps.js';
 import { downloadAsText, downloadAsPDF, downloadAsCalendar, copyToClipboard } from './download.js';
-import { buildZonePlan, validateItinerary, reoptimiseDay } from './planner.js';
+import { buildZonePlan, validateItinerary, reoptimiseDay, scheduleLocally } from './planner.js';
 import { attachRoutes, TRANSPORT_MODES, DEFAULT_MODE, formatDuration, routingAvailable } from './routing.js';
 import { CURRENCIES, DEFAULT_CURRENCY, formatMoney, estimateTripBudget } from './budget.js';
 import {
@@ -787,7 +788,7 @@ async function startPlanning() {
         const placesCacheKey = cacheKey('places', state.locations.join(','));
         let famousPlaces = cacheGet(placesCacheKey);
         if (!famousPlaces?.length) {
-            famousPlaces = await fetchFamousPlaces(state.config, state.locations, onSwitch);
+            famousPlaces = await discoverPlaces(state.locations, onSwitch);
             cacheSet(placesCacheKey, famousPlaces);
         }
         if (!famousPlaces.length) throw new Error('No places came back for those destinations. Try a different spelling.');
@@ -847,6 +848,54 @@ async function startPlanning() {
         hideProgress();
         showToast(err.message || 'Something went wrong', 'error');
         console.error(err);
+    }
+}
+
+// ── Discovery with a keyless fallback ─────────────────────────
+//
+// Free AI tiers run out mid-trip, and when they did the app simply stopped:
+// an error toast and an empty grid. OpenStreetMap knows where the landmarks are
+// without spending any quota, so a dry provider now costs prose, not the app.
+
+let _offlineNoticeShown = false;
+
+function noteOfflineData() {
+    if (_offlineNoticeShown) return;
+    _offlineNoticeShown = true;
+    showToast('AI is out of free quota — using OpenStreetMap map data instead 🗺️', 'info');
+}
+
+/** Places for the initial discovery grid. Falls back to OSM per location. */
+async function discoverPlaces(locations, onSwitch, perLocation = 8) {
+    try {
+        return await fetchFamousPlaces(state.config, locations, onSwitch, perLocation);
+    } catch (aiError) {
+        console.warn('[discovery] AI unavailable, falling back to OpenStreetMap:', aiError.message);
+        const batches = await Promise.all(locations.map(loc =>
+            discoverPlacesOSM(loc, { limit: perLocation })
+                .catch(osmError => {
+                    console.warn(`[discovery] OSM failed for ${loc}:`, osmError.message);
+                    return [];
+                })));
+
+        const places = batches.flat();
+        // Nothing worked — report the AI failure, which is the useful one.
+        if (!places.length) throw aiError;
+        noteOfflineData();
+        return places;
+    }
+}
+
+/** Top-up places for a single location, with the same fallback. */
+async function discoverMorePlaces(loc, existingNames, needed) {
+    try {
+        return await fetchMorePlaces(state.config, loc, existingNames, showAIBadge, needed);
+    } catch (aiError) {
+        console.warn('[discovery] AI top-up unavailable, using OpenStreetMap:', aiError.message);
+        const places = await discoverPlacesOSM(loc, { limit: needed, exclude: existingNames })
+            .catch(() => []);
+        if (places.length) noteOfflineData();
+        return places;
     }
 }
 
@@ -944,7 +993,7 @@ function renderDiscoveryScreen({ allowAutoFill = true } = {}) {
                     .filter(p => p.location?.toLowerCase().includes(loc.toLowerCase()))
                     .map(p => p.name);
                 try {
-                    const more = await fetchMorePlaces(state.config, loc, existingNames, showAIBadge, needed);
+                    const more = await discoverMorePlaces(loc, existingNames, needed);
                     const fresh = more.filter(m => !state.places.some(p => placesAreSimilar(p.name, m.name)));
                     if (!fresh.length) break;
                     state.places.push(...fresh);
@@ -984,7 +1033,7 @@ function renderDiscoveryScreen({ allowAutoFill = true } = {}) {
                     const existingNames = state.places
                         .filter(p => p.location?.toLowerCase().includes(loc.toLowerCase()))
                         .map(p => p.name);
-                    const more = await fetchMorePlaces(state.config, loc, existingNames, showAIBadge, stillNeeded);
+                    const more = await discoverMorePlaces(loc, existingNames, stillNeeded);
                     const fresh = more.filter(m => !state.places.some(p => placesAreSimilar(p.name, m.name)));
                     hideGridSpinner(cardRow);
                     if (fresh.length) {
@@ -1328,9 +1377,17 @@ async function generateItineraryFlow() {
 
         let itin = cacheGet(itinKey);
         if (!itin) {
-            itin = await scheduleZonePlan(state.config, plan, {
-                locations: state.locations, prefs: state.prefs, stay: state.stay,
-            }, onSwitch);
+            try {
+                itin = await scheduleZonePlan(state.config, plan, {
+                    locations: state.locations, prefs: state.prefs, stay: state.stay,
+                }, onSwitch);
+            } catch (aiError) {
+                // The zones, ordering and dates are already decided locally, so a
+                // dry provider costs descriptions and opening hours — not the trip.
+                console.warn('[itinerary] AI scheduling unavailable, building locally:', aiError.message);
+                itin = scheduleLocally(plan, { prefs: state.prefs, locations: state.locations });
+                noteOfflineData();
+            }
             cacheSet(itinKey, itin);
         }
 

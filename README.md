@@ -146,16 +146,18 @@ AI-Trip-Planner/
 │   ├── env.local.js        # (git-ignored, optional) real keys for direct-provider local dev
 │   ├── app-config.js       # Generated at build: capability flags, no secrets
 │   ├── util.js             # Escaping, timezone-safe dates, geo, concurrency, focus trap
-│   ├── planner.js          # ★ Zone clustering (k-means++), route optimisation (2-opt), validation
+│   ├── planner.js          # ★ Zone clustering (k-means++), 2-opt routing, offline scheduler, validation
 │   ├── routing.js          # OSRM road routing, transport modes, fare model
 │   ├── budget.js           # Currency handling + whole-trip cost breakdown
 │   ├── app.js              # ★ Main orchestrator: state, screen routing, UI logic
 │   ├── api.js              # AI providers + JSON repair; discovery, scheduling, packing, local info
+│   ├── places-osm.js       # ★ Keyless place discovery (Overpass + Wikipedia) for when AI quota runs out
 │   ├── maps.js             # Leaflet: markers, popups, focus, polylines, theme swap
 │   └── download.js         # Export: clipboard, text, .ics calendar, rich PDF
 │
 ├── netlify/functions/
 │   ├── _shared.js          # Origin allow-list, rate limiting, response helpers
+│   ├── _models.js          # ★ Free-tier provider registry: runtime model discovery + failure memory
 │   ├── ai-proxy.js         # Server-side AI calls (keeps keys safe)
 │   ├── unsplash-proxy.js   # Unsplash image search (proxy for key safety)
 │   └── weather-proxy.js    # OpenWeatherMap forecast (proxy for key safety)
@@ -249,28 +251,59 @@ screen-input  ──[Plan My Trip]──►  screen-progress (overlay)
 
 ## API Integrations
 
-### Google Gemini (Primary AI — Tier 1)
-- **Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **Models:** `gemini-2.5-flash` (primary), `gemini-2.5-flash-lite` (tier 1b)
-- **Rate limits:** Free tier ~10 RPM / 250 RPD
-- **Status:** ✅ Highest quality; first in fallback chain
+### AI providers — discovered, not hardcoded
 
-### Groq (Fast Fallback — Tier 2)
-- **Endpoint:** `https://api.groq.com/openai/v1/chat/completions`
-- **Models:** `llama-3.3-70b-versatile` (tier 2a), `llama-3.1-8b-instant` (tier 2b)
-- **Rate limits:** Free tier ~14,400 req/day
-- **Status:** ✅ Very fast; catches Gemini 429s reliably
+**No model ID appears anywhere in the source.** They are read from each
+provider's own list endpoint at runtime (`netlify/functions/_models.js`), because
+hardcoded IDs rot: `gemini-2.5-flash` began returning `404 — no longer available
+to new users` while the API key was perfectly valid, and that single dead string
+took the whole app down.
 
-### OpenRouter (Safety Net — Tier 3)
-- **Endpoint:** `https://openrouter.ai/api/v1/chat/completions`
-- **Model:** `meta-llama/llama-3.1-8b-instruct:free`
-- **Rate limits:** Free tier ~50 req/day (as of Apr 2025)
-- **Status:** ✅ Ultimate fallback; lower quality than Gemini/Groq
+| Provider | Env var | Endpoint | Free tier |
+|---|---|---|---|
+| Google AI Studio | `GEMINI_API_KEY` | `generativelanguage.googleapis.com/v1beta` | ~10 RPM / 250 RPD |
+| Groq | `GROQ_API_KEY` | `api.groq.com/openai/v1` | ~14,400 req/day, 100k tokens/day per model |
+| Cerebras | `CEREBRAS_API_KEY` | `api.cerebras.ai/v1` | generous daily token budget |
+| Mistral | `MISTRAL_API_KEY` | `api.mistral.ai/v1` | free experimental tier |
+| OpenRouter | `OPENROUTER_API_KEY` | `openrouter.ai/api/v1` | whatever is currently `:free` |
+
+Every provider is optional — one is skipped entirely when its env var is absent,
+so you can add or drop providers without touching code. **More keys means more
+independent free quotas**, which is the whole point: each provider is a separate
+daily budget, and the chain is interleaved across providers so one exhausted
+account doesn't have to be rediscovered three times before moving on.
+
+Selection rules worth knowing:
+
+- **Gemini avoids `pro` models on purpose.** The free-tier `pro` quota is tiny
+  and 429s almost immediately, so the flash tiers are genuinely the right choice
+  rather than merely the cheap one. Stable aliases (`gemini-flash-latest`) rank
+  first because they keep working when the build behind them is retired.
+- **Image, audio, TTS, embedding and vision-only models are excluded.** Discovery
+  once selected `gemini-3-pro-image` — an image generator — and every request 404'd.
+- **OpenRouter's free list is derived from live pricing.** The previously
+  hardcoded `meta-llama/llama-3.1-8b-instruct:free` no longer exists at all;
+  only the paid slug remains.
+- **Failures are remembered.** A model that returns 404 is shunned for 6 hours,
+  429 for 10 minutes. Before this, every single request re-tried the same dead
+  models and burned seconds of the function's 10-second budget doing it.
+
+#### `max_tokens` is a rate-limit reservation, not a ceiling
+
+The most damaging bug of the lot. Providers charge `max_tokens` against the
+per-minute limit **before the model runs**. The app asked for 8192 output tokens
+on every call, but `llama-3.1-8b-instant` has a 6000 TPM limit — so the
+last-resort model returned `413 Request too large` every single time and had, in
+practice, never once answered a request.
+
+Output budgets are now sized per call (a place list needs far less than a
+four-day schedule), clamped to each provider's per-minute limit, and refitted
+automatically if a 413 reports the real budget.
 
 ### Unsplash (Images)
 - **Endpoint:** `https://api.unsplash.com/search/photos`
 - **Query strategy:** `"{place name} {city} landmark"` for location specificity
-- **Fallback:** Picsum (seeded by place name hash) → SVG placeholder
+- **Fallback:** Wikipedia lead image first, then Unsplash, then a generated SVG card
 - **Rate limits:** Free tier 50 req/hour
 - **Status:** ✅ Excellent; double fallback ensures no broken images
 
@@ -286,7 +319,18 @@ screen-input  ──[Plan My Trip]──►  screen-progress (overlay)
 - **Backend:** OpenStreetMap
 - **Key required:** ❌ None
 - **Used for:** Resolving a search query to lat/lng inside "Search Nearby"
+- **Caution:** its rate-limit response carries no CORS headers, so exceeding the
+  1 req/sec policy surfaces in the browser as an unexplained `Failed to fetch`
+  rather than a 429. `places-osm.js` therefore prefers Photon and keeps
+  Nominatim as a fallback.
 - **Status:** ✅ No key needed
+
+### Overpass (Keyless Place Discovery)
+- **Endpoints:** `overpass-api.de`, `overpass.kumi.systems`, `overpass.private.coffee`
+- **Backend:** OpenStreetMap
+- **Key required:** ❌ None
+- **Used for:** finding real attractions when every AI provider is out of quota
+- **Status:** ✅ No key needed; results cached in `localStorage` for 30 days
 
 ### OpenWeatherMap (Weather)
 - **Endpoint:** `https://api.openweathermap.org/data/2.5/forecast` (via `weather-proxy`)
@@ -303,9 +347,11 @@ Set these in the **Netlify dashboard** under `Site Settings → Environment Vari
 
 | Variable | Description | Required | Free Tier |
 |---|---|---|---|
-| `GEMINI_API_KEY` | Google AI Studio API key | ✅ **Yes (primary)** | ✅ 10 RPM / 250 RPD |
-| `GROQ_API_KEY` | Groq Cloud API key | ❌ No (Tier 2 fallback) | ✅ ~14,400 req/day |
-| `OPENROUTER_API_KEY` | OpenRouter API key | ❌ No (Tier 3 fallback) | ✅ ~50 req/day |
+| `GEMINI_API_KEY` | Google AI Studio API key | ❌ No — but at least one AI key is needed for descriptions | ✅ 10 RPM / 250 RPD |
+| `GROQ_API_KEY` | Groq Cloud API key | ❌ No | ✅ ~14,400 req/day |
+| `CEREBRAS_API_KEY` | Cerebras Cloud API key | ❌ No | ✅ generous daily tokens |
+| `MISTRAL_API_KEY` | Mistral La Plateforme key | ❌ No | ✅ free experimental tier |
+| `OPENROUTER_API_KEY` | OpenRouter API key | ❌ No | ✅ live `:free` models |
 | `UNSPLASH_ACCESS_KEY` | Unsplash developer access key | ❌ No | ✅ 50 req/hr |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap API key | ❌ No (optional) | ✅ 1,000 req/day |
 
@@ -958,7 +1004,32 @@ MIT License — free to use, modify, and distribute. See LICENSE file.
 
 ## Changelog
 
-### v2.1.1 (Current) — production hotfixes
+### v2.2.0 (Current) — surviving free-tier limits
+
+Follow-up to the production outage. Discovery would return half a screen of
+places and then fail repeatedly, because every free provider had run dry.
+
+**The quota bugs**
+
+- 🔥 **`max_tokens: 8192` made the last-resort model permanently unusable.** Providers reserve `max_tokens` against the per-minute limit *before* running, so on `llama-3.1-8b-instant` (6000 TPM) every request returned `413 Request too large` — it had never once answered. Output budgets are now sized per call, clamped per provider, and refitted automatically when a 413 reports the real limit.
+- 🔥 **A truncated reply silently became a short grid.** When Groq hit its daily token cap mid-response, the JSON salvage path recovered the complete entries and the app rendered them as if nothing was wrong — five tiles instead of ten, then failures on every top-up. Requests now ask for a size that fits.
+- 🔥 **Dead models were retried on every single request**, burning seconds of the function's 10-second budget before reaching a working provider. A 404 now shuns a model for 6 hours, a 429 for 10 minutes.
+- 🔥 **Model discovery picked `gemini-3-pro-image`** — an image generator — and free-tier `pro` models whose quota 429s immediately. Selection now excludes image/audio/TTS/embedding/vision models outright and prefers flash tiers and stable `-latest` aliases.
+- 🔥 **OpenRouter's hardcoded free model no longer exists.** `meta-llama/llama-3.1-8b-instruct:free` has been withdrawn; only the paid slug remains. The free list is now derived from live pricing.
+
+**More free capacity**
+
+- ➕ **Cerebras and Mistral added** as providers (`CEREBRAS_API_KEY`, `MISTRAL_API_KEY`). Every provider is optional and independent, so each key adds a separate daily quota. The chain interleaves across providers rather than draining one at a time.
+- 💾 **Responses are cached in `localStorage` for 7 days.** Re-asking an identical question used to spend quota that cannot be earned back — going back a screen and forward again was enough to do it.
+- ✂️ **Smaller asks.** Per-place travel estimates were dropped from the prompt entirely: `routing.js` already measures real distances against OSRM, so the model was being paid to guess something we knew exactly. Schedules are requested three days at a time so a truncated reply can no longer lose whole days.
+
+**Working without any AI at all**
+
+- 🗺️ **New `js/places-osm.js`** — real attractions from OpenStreetMap with surveyed coordinates, plus Wikipedia descriptions. No key, no quota. Results are ranked by notability, balanced across categories so a city doesn't return eight museums, and cached for 30 days.
+- 📋 **New `scheduleLocally()` in `planner.js`** — the zones, ordering and dates were always computed locally, so a dry provider now costs prose, not the trip. Times come from the traveller's own start time and typical visit lengths; opening hours and entry fees are left blank rather than invented, because a confidently wrong opening time is worse than none.
+- ✅ Verified end-to-end with every provider returning 502: 8 places discovered, a 3-day itinerary built, real OSRM distances and fares attached, zero console errors.
+
+### v2.1.1 — production hotfixes
 
 - 🔥 **`gemini-2.5-flash` started returning 404 "no longer available to new users"**, taking the deployed app down. Model IDs are now discovered from each provider's list-models endpoint and ranked at request time instead of hardcoded. Applies to Groq too, whose IDs are deprecated just as often. See [Model Discovery](#model-discovery).
 - 🔥 **The service worker broke Google Fonts and Leaflet's CSS.** It proxied cross-origin requests through its own `fetch()`, which is subject to the page's `connect-src` — so legitimate `<link>`/`<img>` loads (governed by the much broader `style-src`/`img-src`) were rejected as `connect-src` violations. Cross-origin requests are no longer intercepted.

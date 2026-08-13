@@ -21,70 +21,102 @@ const MAX_ITINERARY_CHUNKS = 8;    // 8 × 7 days = 56-day ceiling on AI calls
 // ── AI Provider Definitions (direct calls — local dev only) ───────
 // Model IDs are discovered from each provider's list endpoint rather than
 // hardcoded: providers retire IDs without notice, and a stale one returns a 404
-// that is indistinguishable from a bad key.
-const EXCLUDED_MODELS = /embed|aqa|imagen|veo|image-generation|tts|audio|realtime|live|guard|whisper|learnlm/i;
+// that is indistinguishable from a bad key. Production uses the same logic
+// server-side in netlify/functions/_models.js — keep the two in step.
+//
+// `image` is deliberately broad here: discovery once selected
+// `gemini-3-pro-image`, an image generator, and every request 404'd.
+const EXCLUDED_MODELS = /image|imagen|banana|veo|lyria|sora|dall|tts|audio|speech|voice|music|embed|aqa|rerank|guard|safety|whisper|learnlm|live|realtime|robotics|computer-use|-vl\b|vision/i;
 
-function scoreModel(name) {
-    const n = name.toLowerCase();
-    if (EXCLUDED_MODELS.test(n)) return -1;
-    let score = 0;
-    if (/flash|instant|mini|lite/.test(n)) score += 100;
-    if (/pro|large|70b/.test(n)) score += 40;
-    const version = n.match(/(\d+(?:\.\d+)?)/);
-    if (version) score += Math.min(60, parseFloat(version[1]) * 12);
-    if (/latest/.test(n)) score += 25;
-    if (/preview|exp|experimental|beta/.test(n)) score -= 45;
-    if (/lite/.test(n)) score -= 15;
-    if (/thinking/.test(n)) score -= 30;
-    return score;
+/** Rank against an ordered list of preferred patterns; earlier match wins. */
+function pickModels(ids, prefer, take) {
+    return ids
+        .filter(id => id && !EXCLUDED_MODELS.test(id))
+        .map(id => {
+            let rank = prefer.findIndex(re => re.test(id));
+            if (rank === -1) rank = prefer.length;
+            let tie = 0;
+            if (/latest/.test(id)) tie -= 2;                       // aliases don't rot
+            if (/preview|experimental|\bexp\b/.test(id)) tie += 3;  // retired fastest
+            if (/thinking|reasoning/.test(id)) tie += 2;
+            return { id, key: rank * 10 + tie };
+        })
+        .filter(m => m.key < prefer.length * 10)
+        .sort((a, b) => a.key - b.key)
+        .slice(0, take)
+        .map(m => m.id);
 }
 
-const rankModels = (names, limit) => names
-    .map(name => ({ name, score: scoreModel(name) }))
-    .filter(m => m.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(m => m.name);
+// Free-tier `pro` quota on Gemini is tiny and 429s almost at once, so the flash
+// tiers are the correct choice here, not merely the cheap one.
+const LOCAL_SPECS = [
+    {
+        key: 'geminiKey', type: 'gemini', label: 'Gemini', take: 3,
+        prefer: [/^gemini-flash-latest$/, /^gemini-[\d.]+-flash$/, /flash-lite/, /flash/, /gemma/],
+        fallback: ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.0-flash'],
+        async list(k) {
+            const res = await fetchWithTimeout(`${GEMINI_BASE}?key=${encodeURIComponent(k)}&pageSize=200`, {}, 6000);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            return (data.models || [])
+                .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+                .map(m => String(m.name || '').replace(/^models\//, ''));
+        },
+    },
+    {
+        key: 'groqKey', type: 'groq', label: 'Groq', take: 3,
+        prefer: [/70b|versatile/, /gpt-oss/, /8b|instant/, /llama|qwen|gemma|mixtral/],
+        fallback: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+        async list(k) {
+            const res = await fetchWithTimeout('https://api.groq.com/openai/v1/models',
+                { headers: { Authorization: `Bearer ${k}` } }, 6000);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return ((await res.json()).data || []).map(m => String(m.id || ''));
+        },
+    },
+    {
+        key: 'openrouterKey', type: 'openrouter', label: 'OpenRouter', take: 3,
+        prefer: [/gpt-oss/, /gemma/, /nemotron.*(super|nano)/, /llama|qwen|mistral|deepseek/],
+        fallback: [],
+        async list(k) {
+            const res = await fetchWithTimeout('https://openrouter.ai/api/v1/models',
+                { headers: { Authorization: `Bearer ${k}` } }, 6000);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const isZero = v => ['0', '0.0', '-1', ''].includes(String(v ?? ''));
+            return ((await res.json()).data || [])
+                .filter(m => isZero(m.pricing?.prompt) && isZero(m.pricing?.completion))
+                .filter(m => !String(m.id || '').startsWith('openrouter/'))
+                .filter(m => (m.context_length || 0) >= 16000)
+                .map(m => String(m.id || ''));
+        },
+    },
+];
 
 let _modelCache = null;
 
 async function discoverProviders(config) {
     if (_modelCache) return _modelCache;
+
+    const active = LOCAL_SPECS.filter(spec => config[spec.key]);
+    const lists = await Promise.all(active.map(async spec => {
+        let ids = spec.fallback;
+        try {
+            const found = pickModels(await spec.list(config[spec.key]), spec.prefer, spec.take);
+            if (found.length) ids = found;
+        } catch (err) {
+            console.warn(`[models] ${spec.label} list failed:`, err.message);
+        }
+        return { spec, ids };
+    }));
+
+    // Interleaved by provider, so one exhausted free quota doesn't have to be
+    // rediscovered three times before moving on to the next provider.
     const providers = [];
-
-    if (config.geminiKey) {
-        let ids = ['gemini-flash-latest', 'gemini-2.0-flash'];
-        try {
-            const res = await fetchWithTimeout(
-                `${GEMINI_BASE}?key=${encodeURIComponent(config.geminiKey)}&pageSize=200`, {}, 6000);
-            if (res.ok) {
-                const data = await res.json();
-                const found = rankModels((data.models || [])
-                    .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
-                    .map(m => String(m.name || '').replace(/^models\//, '')), 3);
-                if (found.length) ids = found;
-            }
-        } catch (err) { console.warn('[models] Gemini list failed:', err.message); }
-        ids.forEach(model => providers.push({ name: `Gemini ${model}`, model, type: 'gemini' }));
-    }
-
-    if (config.groqKey) {
-        let ids = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
-        try {
-            const res = await fetchWithTimeout('https://api.groq.com/openai/v1/models', {
-                headers: { Authorization: `Bearer ${config.groqKey}` },
-            }, 6000);
-            if (res.ok) {
-                const data = await res.json();
-                const found = rankModels((data.data || []).map(m => String(m.id || '')), 2);
-                if (found.length) ids = found;
-            }
-        } catch (err) { console.warn('[models] Groq list failed:', err.message); }
-        ids.forEach(model => providers.push({ name: `${model} (Groq)`, model, type: 'groq' }));
-    }
-
-    if (config.openrouterKey) {
-        providers.push({ name: 'OpenRouter Llama 3.1 8B', model: 'meta-llama/llama-3.1-8b-instruct:free', type: 'openrouter' });
+    const depth = Math.max(0, ...lists.map(l => l.ids.length));
+    for (let i = 0; i < depth; i++) {
+        for (const { spec, ids } of lists) {
+            if (ids[i]) providers.push({ name: `${ids[i]} (${spec.label})`, model: ids[i], type: spec.type });
+        }
     }
 
     _modelCache = providers;
@@ -106,12 +138,79 @@ export function proxyAvailability() { return _proxyAvailable; }
 let lastProviderUsed = '';
 export function getLastProvider() { return lastProviderUsed; }
 
+// ── Response cache ────────────────────────────────────────────
+//
+// Free tiers are measured in tokens per day, so re-asking the same question is
+// not merely slow, it permanently spends a scarce resource. Identical prompts
+// are served from localStorage: the app used to burn quota re-fetching the same
+// city every time a user went back a screen.
+
+const CACHE_PREFIX = 'atp-ai-';
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // place lists age slowly
+const CACHE_MAX_ENTRIES = 60;
+
+/** FNV-1a — short, stable, and good enough to key a cache on. */
+function hashPrompt(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(36) + str.length.toString(36);
+}
+
+function cacheGet(key) {
+    try {
+        const raw = localStorage.getItem(CACHE_PREFIX + key);
+        if (!raw) return null;
+        const { text, at } = JSON.parse(raw);
+        if (!text || Date.now() - at > CACHE_TTL_MS) {
+            localStorage.removeItem(CACHE_PREFIX + key);
+            return null;
+        }
+        return text;
+    } catch { return null; }
+}
+
+function cacheSet(key, text) {
+    try {
+        localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ text, at: Date.now() }));
+    } catch {
+        // Quota exceeded — drop the oldest half rather than losing caching entirely.
+        try {
+            const entries = Object.keys(localStorage)
+                .filter(k => k.startsWith(CACHE_PREFIX))
+                .map(k => ({ k, at: JSON.parse(localStorage.getItem(k) || '{}').at || 0 }))
+                .sort((a, b) => a.at - b.at);
+            entries.slice(0, Math.ceil(entries.length / 2) || 1).forEach(e => localStorage.removeItem(e.k));
+            localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ text, at: Date.now() }));
+        } catch { /* caching is an optimisation, never a requirement */ }
+    }
+}
+
+/** Keep the cache from growing without bound across sessions. */
+function trimCache() {
+    try {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
+        if (keys.length <= CACHE_MAX_ENTRIES) return;
+        keys.map(k => ({ k, at: JSON.parse(localStorage.getItem(k) || '{}').at || 0 }))
+            .sort((a, b) => a.at - b.at)
+            .slice(0, keys.length - CACHE_MAX_ENTRIES)
+            .forEach(e => localStorage.removeItem(e.k));
+    } catch { /* ignore */ }
+}
+
+/** Signals to the UI that every provider is out of free quota, not merely broken. */
+export class QuotaExhaustedError extends Error {
+    constructor(message) { super(message); this.name = 'QuotaExhaustedError'; this.exhausted = true; }
+}
+
 // ── Proxied AI call (production) ─────────────────────────────
-async function callViaProxy(prompt) {
+async function callViaProxy(prompt, maxTokens) {
     const res = await fetchWithTimeout(PROXY_AI, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, maxTokens }),
     }, PROXY_TIMEOUT_MS);
 
     if (res.status === 404) {
@@ -119,32 +218,63 @@ async function callViaProxy(prompt) {
         throw new Error('Proxy not deployed');
     }
     if (!res.ok) {
-        const msg = await res.text().catch(() => `HTTP ${res.status}`);
-        throw new Error(msg.slice(0, 300));
+        const payload = await res.json().catch(() => null);
+        const msg = payload?.error || (await res.text().catch(() => `HTTP ${res.status}`));
+        if (payload?.exhausted) throw new QuotaExhaustedError(String(msg).slice(0, 300));
+        throw new Error(String(msg).slice(0, 300));
     }
     _proxyAvailable = true;
     return await res.json();
 }
 
 // ── Core: Smart AI Call with Fallback ────────────────────────
-async function smartAICall(prompt, config, onProviderSwitch) {
+/**
+ * @param {string} prompt
+ * @param {object} config
+ * @param {function} [onProviderSwitch]
+ * @param {{maxTokens?: number, cache?: boolean}} [opts]
+ *        `maxTokens` matters more than it looks: providers charge it against
+ *        the rate limit before the model runs, so an over-large ask is an
+ *        instant 413 rather than a longer answer.
+ */
+async function smartAICall(prompt, config, onProviderSwitch, opts = {}) {
+    const { maxTokens = 2048, cache = true } = opts;
+    const cacheKey = cache ? hashPrompt(prompt) : null;
+
+    if (cacheKey) {
+        const hit = cacheGet(cacheKey);
+        if (hit) {
+            lastProviderUsed = 'Cached';
+            if (onProviderSwitch) onProviderSwitch('Cached');
+            return hit;
+        }
+    }
+
+    const remember = text => {
+        if (cacheKey && text) { cacheSet(cacheKey, text); trimCache(); }
+        return text;
+    };
+
     const errors = [];
     const hasDirectKeys = Boolean(config?.geminiKey || config?.groqKey || config?.openrouterKey);
+    let exhausted = false;
 
     // Try the proxy unless we already know it isn't there. Keys stay server-side.
     if (_proxyAvailable !== false) {
         if (onProviderSwitch) onProviderSwitch('Connecting to AI…');
         try {
-            const data = await callViaProxy(prompt);
+            const data = await callViaProxy(prompt, maxTokens);
             lastProviderUsed = data.providerUsed || 'AI';
             if (onProviderSwitch) onProviderSwitch(lastProviderUsed);
-            return data.text || '';
+            return remember(data.text || '');
         } catch (err) {
             console.warn('[proxy] failed:', err.message);
             errors.push(`Server: ${err.message}`);
+            exhausted = Boolean(err.exhausted);
             if (!hasDirectKeys) {
                 // Nothing else to try — surface the real reason instead of a
                 // misleading "all providers failed".
+                if (exhausted) throw err;
                 throw new Error(
                     _proxyAvailable === false
                         ? 'AI service is not configured. Deploy the Netlify functions, or add keys to js/env.local.js for local development.'
@@ -160,28 +290,39 @@ async function smartAICall(prompt, config, onProviderSwitch) {
         if (onProviderSwitch) onProviderSwitch(provider.name);
         try {
             let text;
-            if (provider.type === 'gemini') text = await callGemini(config.geminiKey, provider.model, prompt);
-            else if (provider.type === 'groq') text = await callGroq(config.groqKey, provider.model, prompt);
-            else text = await callOpenRouter(config.openrouterKey, provider.model, prompt);
+            if (provider.type === 'gemini') text = await callGemini(config.geminiKey, provider.model, prompt, maxTokens);
+            else if (provider.type === 'groq') text = await callGroq(config.groqKey, provider.model, prompt, maxTokens);
+            else text = await callOpenRouter(config.openrouterKey, provider.model, prompt, maxTokens);
 
             if (!text) throw new Error('Empty response');
             lastProviderUsed = provider.name;
-            return text;
+            return remember(text);
         } catch (err) {
             console.warn(`[${provider.name}] failed:`, err.message);
+            if (/quota|rate limit|429|413/i.test(err.message)) exhausted = true;
             errors.push(`${provider.name}: ${err.message}`);
         }
     }
-    throw new Error('All AI providers failed:\n' + errors.join('\n'));
+
+    const detail = 'All AI providers failed:\n' + errors.join('\n');
+    throw exhausted ? new QuotaExhaustedError(detail) : new Error(detail);
 }
 
 // ── Gemini API Call (v1beta with working models) ───────────────
-async function callGemini(apiKey, model, prompt) {
+async function callGemini(apiKey, model, prompt, maxTokens = 2048) {
     const url = `${GEMINI_BASE}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
     const res = await fetchWithTimeout(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            // Native JSON mode removes a whole class of parse failures.
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: maxTokens,
+                responseMimeType: 'application/json',
+            },
+        }),
     }, REQUEST_TIMEOUT_MS);
 
     if (!res.ok) {
@@ -193,7 +334,7 @@ async function callGemini(apiKey, model, prompt) {
 }
 
 // ── OpenAI-compatible chat call (Groq / OpenRouter) ───────────
-async function callChatCompletions(endpoint, apiKey, model, prompt) {
+async function callChatCompletions(endpoint, apiKey, model, prompt, maxTokens = 2048) {
     const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -204,7 +345,10 @@ async function callChatCompletions(endpoint, apiKey, model, prompt) {
                 { role: 'user', content: prompt },
             ],
             temperature: 0.7,
-            max_tokens: 8192,
+            // Not a ceiling on ambition: providers reserve this against the
+            // per-minute limit up front, so 8192 made every call to a
+            // 6000-TPM model fail with 413 before it ever ran.
+            max_tokens: maxTokens,
         }),
     }, REQUEST_TIMEOUT_MS);
 
@@ -216,8 +360,8 @@ async function callChatCompletions(endpoint, apiKey, model, prompt) {
     return data.choices?.[0]?.message?.content || '';
 }
 
-const callGroq = (key, model, prompt) => callChatCompletions(GROQ_BASE, key, model, prompt);
-const callOpenRouter = (key, model, prompt) => callChatCompletions(OPENROUTER_BASE, key, model, prompt);
+const callGroq = (key, model, prompt, max) => callChatCompletions(GROQ_BASE, key, model, prompt, max);
+const callOpenRouter = (key, model, prompt, max) => callChatCompletions(OPENROUTER_BASE, key, model, prompt, max);
 
 // ── JSON Extraction + Repair ─────────────────────────────────
 function extractJSON(text) {
@@ -303,9 +447,19 @@ export async function fetchFamousPlaces(config, locations, onProviderSwitch, per
 Each item: ${PLACE_SCHEMA}
 ${COORD_RULE}
 Return ONLY valid JSON array, no explanation, no markdown.`;
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    const text = await smartAICall(prompt, config, onProviderSwitch,
+        { maxTokens: placeTokens(perLocation * locations.length) });
     return normalizePlaces(extractJSON(text), locations[0]);
 }
+
+/**
+ * Output budget for a list of `n` places.
+ *
+ * Deliberately generous but bounded: too small truncates the JSON mid-array
+ * (the salvage path then silently returns half a screen of results), while too
+ * large is reserved against the provider's per-minute limit and 413s outright.
+ */
+const placeTokens = n => Math.min(4096, 400 + Math.max(1, n) * 90);
 
 // ── API Call 1b: Fetch More Places ────────────────────────────
 export async function fetchMorePlaces(config, location, existingNames, onProviderSwitch, count = 6) {
@@ -314,7 +468,7 @@ export async function fetchMorePlaces(config, location, existingNames, onProvide
 Sort by popularity. Each item: ${PLACE_SCHEMA.replace('"<city>"', `"${location}"`)}
 ${COORD_RULE}
 Return ONLY valid JSON array, no explanation.`;
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    const text = await smartAICall(prompt, config, onProviderSwitch, { maxTokens: placeTokens(count) });
     return normalizePlaces(extractJSON(text), location);
 }
 
@@ -340,7 +494,7 @@ Each item: ${PLACE_SCHEMA.replace('"<city>"', '"<area or city>"')}
 ${COORD_RULE}
 Return ONLY valid JSON array, no explanation.`;
 
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    const text = await smartAICall(prompt, config, onProviderSwitch, { maxTokens: placeTokens(6) });
     return normalizePlaces(extractJSON(text), locationLabel);
 }
 
@@ -366,7 +520,7 @@ export async function geocodeStay(config, stayName, cityHint, onProviderSwitch) 
     try {
         const prompt = `Return ONLY JSON: { "name": "${stayName.replace(/"/g, '')}", "lat": <decimal>, "lng": <decimal> }
 These are the coordinates of "${stayName}" in ${cityHint || 'India'}. If you are unsure of the exact address, return the coordinates of the neighbourhood it is in. No explanation.`;
-        const parsed = extractJSON(await smartAICall(prompt, config, onProviderSwitch));
+        const parsed = extractJSON(await smartAICall(prompt, config, onProviderSwitch, { maxTokens: 256 }));
         if (Number.isFinite(Number(parsed?.lat)) && Number.isFinite(Number(parsed?.lng))) {
             return { name: stayName.trim(), lat: Number(parsed.lat), lng: Number(parsed.lng), source: 'ai' };
         }
@@ -641,8 +795,10 @@ export async function scheduleZonePlan(config, plan, opts, onProviderSwitch) {
     const days = plan.days.filter(d => d.places.length);
     if (!days.length) return { summary: '', days: [] };
 
+    // Three days per call, not four: the reply has to fit inside the output
+    // budget, and a truncated reply loses whole days rather than degrading.
     const chunks = [];
-    for (let i = 0; i < days.length; i += 4) chunks.push(days.slice(i, i + 4));
+    for (let i = 0; i < days.length; i += 3) chunks.push(days.slice(i, i + 3));
 
     const scheduled = [];
     let summary = '';
@@ -745,14 +901,18 @@ FORMAT (follow exactly):
       "visitDuration": "<e.g. 2 hrs>",
       "bestTime": "<e.g. Early morning before crowds>",
       "closedNote": "<only if closed or restricted on this exact date, else omit>",
-      "accessibility": "<'Step-free' | 'Partly accessible' | 'Not wheelchair accessible'>",
-      "commute_from_prev": { "walk": "<minutes or N/A>", "cab": "<${currency}range or N/A>", "metro": "<line/station or N/A>" }
+      "accessibility": "<'Step-free' | 'Partly accessible' | 'Not wheelchair accessible'>"
     }],
     "meals": [{ "type": "<Breakfast|Lunch|Dinner>", "time": "<e.g. 1:00 PM>", "suggestion": "<specific restaurant or dish>", "area": "<where>", "approxCost": "<${currency}per person>" }]
   }]
 }`;
 
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    // Travel between stops is no longer asked for here: routing.js measures it
+    // against OSRM, which beats a recalled estimate and costs no tokens.
+    const placeCount = days.reduce((n, d) => n + d.places.length, 0);
+    const text = await smartAICall(prompt, config, onProviderSwitch, {
+        maxTokens: Math.min(4096, 500 + placeCount * 150 + days.length * 120),
+    });
     return extractJSON(text);
 }
 
@@ -775,7 +935,7 @@ Do NOT suggest any of these (already in the plan): [${exclude}].
 Each item: ${PLACE_SCHEMA.replace('"<city>"', `"${cityHint}"`)}
 ${COORD_RULE}
 Return ONLY a valid JSON array of 3 items.`;
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    const text = await smartAICall(prompt, config, onProviderSwitch, { maxTokens: placeTokens(3) });
     return normalizePlaces(extractJSON(text), cityHint).slice(0, 3);
 }
 
@@ -797,7 +957,7 @@ ${weatherLine}
 Return ONLY JSON:
 { "groups": [ { "name": "<e.g. Clothing|Documents|Health|Electronics|Day bag>", "items": ["<item>", "..."] } ] }
 6 groups maximum, 8 items maximum per group. Be specific to these destinations, this weather and these activities — not a generic list.`;
-    const parsed = extractJSON(await smartAICall(prompt, config, onProviderSwitch));
+    const parsed = extractJSON(await smartAICall(prompt, config, onProviderSwitch, { maxTokens: 1200 }));
     return Array.isArray(parsed?.groups) ? parsed.groups.slice(0, 6) : [];
 }
 
@@ -817,7 +977,7 @@ Return ONLY JSON:
   "phrases": [{ "local": "<phrase in the local language>", "meaning": "<english>" }]
 }
 Maximum 4 safety tips, 4 etiquette notes and 5 phrases. No explanation.`;
-    return extractJSON(await smartAICall(prompt, config, onProviderSwitch));
+    return extractJSON(await smartAICall(prompt, config, onProviderSwitch, { maxTokens: 1200 }));
 }
 
 export async function enrichCustomPlaces(config, placeNames, locationHint, onProviderSwitch) {
@@ -828,7 +988,7 @@ Location context: ${locationHint || 'India'}
 
 For each place return: { "name": "<exact name as given>", "shortDesc": "<1 engaging sentence about this place>", "category": "<Heritage|Nature|Religious|Market|Museum|Entertainment|Food>", "location": "<city or area it belongs to>" }
 Return ONLY a valid JSON array. No explanation, no markdown.`;
-    const text = await smartAICall(prompt, config, onProviderSwitch);
+    const text = await smartAICall(prompt, config, onProviderSwitch, { maxTokens: placeTokens(placeNames.length) });
     return normalizePlaces(extractJSON(text), locationHint);
 }
 
